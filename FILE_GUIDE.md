@@ -1,0 +1,170 @@
+# KnowAgent 文件职责指南
+
+本文覆盖 `KnowAgent` 当前全部手写文件。`target/` 和 `.m2/` 属于构建产物或本地依赖缓存，不纳入说明。
+
+当前工程处于架构骨架阶段：多数 Java 文件是领域数据类型或端口接口，用来约束模块边界；它们不是完整业务实现。后续实现类应放在对应模块的 `application`、`infrastructure` 或具体业务包中，不要把供应商 SDK 直接写进这些核心接口。
+
+## 1. 根目录与构建配置
+
+| 文件 | 当前作用 | 后续使用方式 |
+|---|---|---|
+| `.dockerignore` | 控制 Docker 构建上下文，排除 Git、本地缓存和编译产物。 | 新增不需要打进镜像的目录时同步更新。 |
+| `.editorconfig` | 统一编码、缩进、换行和文件尾规则。 | IDE 应启用 EditorConfig，减少无意义格式差异。 |
+| `.env.example` | 罗列 Compose 和应用需要的环境变量示例，不保存真实密钥。 | 本地复制为 `.env` 后填写模型、数据库和对象存储配置。 |
+| `.gitignore` | 排除 IDE 文件、密钥文件、日志、缓存和构建产物。 | 新增本地运行产物时补充规则。 |
+| `.mvn/maven.config` | 让所有 Maven 命令自动使用项目内 `settings.xml`。 | 保证不同机器使用一致的仓库配置入口。 |
+| `.mvn/settings.xml` | 将 Maven 本地仓库放到项目 `.m2/repository`，绕开机器级错误配置。 | 可按团队环境增加镜像，但不要写认证凭据。 |
+| `pom.xml` | 父 POM；声明 10 个模块、Java 21、依赖版本、测试与 Enforcer 规则。 | 所有跨模块版本在这里集中管理。 |
+| `docker-compose.yml` | 编排 API、Worker、PostgreSQL、Redis、MinIO、Milvus、etcd 和可选 Neo4j。 | 后续增加健康检查、初始化脚本和生产配置覆盖。 |
+| `README.md` | 项目入口，说明模块、构建、运行方式和当前完成度。 | 每完成一个可演示阶段同步更新。 |
+| `FILE_GUIDE.md` | 当前文件职责索引。 | 新增、移动或删除手写文件时同步维护。 |
+
+## 2. Docker 与架构文档
+
+| 文件 | 当前作用 | 后续使用方式 |
+|---|---|---|
+| `docker/api.Dockerfile` | 分阶段构建 API 可执行 JAR，并以精简 JRE 镜像运行。 | 增加非 root 用户、探针和 JVM 生产参数。 |
+| `docker/worker.Dockerfile` | 分阶段构建并运行异步 Worker。 | 与 API 独立扩缩容，配置不同资源限制。 |
+| `docs/architecture.md` | 描述模块依赖、核心端口和请求/Run 主链路。 | 补充组件图、时序图和部署拓扑。 |
+| `docs/adr/0001-modular-monolith.md` | 记录先采用模块化单体而非微服务的决策。 | 架构拆分时新增 ADR，不直接改写历史结论。 |
+| `docs/adr/0002-outbox-redis-streams.md` | 记录 PostgreSQL Outbox + Redis Streams 的任务投递决策。 | 实现后补充失败恢复和一致性验证结果。 |
+
+## 3. `knowagent-common`
+
+| 文件 | 当前作用 | 后续使用方式 |
+|---|---|---|
+| `knowagent-common/pom.xml` | 最底层共享模块，无业务模块反向依赖。 | 只放稳定、通用且无基础设施依赖的类型。 |
+| `knowagent-common/src/main/java/com/knowagent/common/package-info.java` | 声明 common 包的边界和用途。 | 保持为模块级说明。 |
+| `.../common/error/ErrorCode.java` | 统一错误码接口。 | 各模块定义自己的错误码枚举并实现它。 |
+| `.../common/error/BusinessException.java` | 携带错误码的业务异常基类。 | API 层统一转换为标准错误响应。 |
+| `.../common/event/DomainEvent.java` | 领域事件最小契约，提供事件 ID 和发生时间。 | Outbox 事件和模块间事件实现该接口。 |
+| `.../common/tenant/TenantId.java` | 强类型租户 ID，避免在核心逻辑中裸用字符串或 UUID。 | 所有租户数据、命令和查询都显式携带它。 |
+
+## 4. `knowagent-security`
+
+| 文件 | 当前作用 | 后续使用方式 |
+|---|---|---|
+| `knowagent-security/pom.xml` | 安全模块依赖定义，目前仅依赖 common。 | 后续加入 JWT、Spring Security 和持久化适配依赖。 |
+| `.../security/package-info.java` | 声明认证、授权和租户上下文模块边界。 | 保持为包级架构说明。 |
+| `.../security/principal/TenantPrincipal.java` | 表示已认证用户、租户、角色和权限集合。 | JWT/OIDC/API Key 认证成功后构造，并注入请求上下文。 |
+
+## 5. `knowagent-model`
+
+| 文件 | 当前作用 | 后续使用方式 |
+|---|---|---|
+| `knowagent-model/pom.xml` | 模型模块依赖定义，引入 Spring AI 模型抽象。 | 添加具体供应商适配器时保持核心端口不变。 |
+| `.../model/package-info.java` | 声明模型网关模块边界。 | 防止 Agent 直接依赖供应商 SDK。 |
+| `.../model/chat/ChatRole.java` | 定义 system、user、assistant、tool 等消息角色。 | 做供应商消息格式映射。 |
+| `.../model/chat/ChatMessage.java` | 一条标准化聊天消息及其元数据。 | Prompt 组装和历史消息加载使用。 |
+| `.../model/chat/ModelOptions.java` | 标准化 temperature、maxTokens 等生成参数。 | 后续可增加 stop、topP，但避免暴露供应商私有字段。 |
+| `.../model/chat/ChatCommand.java` | 一次模型调用命令，包含模型、消息和生成选项。 | Agent Runtime 构造，模型适配器消费。 |
+| `.../model/chat/ModelEvent.java` | 统一流式模型事件：文本增量、工具调用、用量和完成。 | 映射到 RunEvent，再通过 SSE 输出。 |
+| `.../model/chat/ChatModelGateway.java` | 大模型调用端口，返回 Reactor `Flux<ModelEvent>`。 | Spring AI 适配器实现供应商路由、超时和重试。 |
+| `.../model/embedding/EmbeddingGateway.java` | 文本向量化端口。 | 文档索引和查询向量生成共同调用。 |
+| `.../model/rerank/RankedDocument.java` | 重排后的文档及分数数据类型。 | RAG 检索结果二次排序后返回。 |
+| `.../model/rerank/RerankGateway.java` | Rerank 模型调用端口。 | 实现供应商适配和无 Rerank 时的降级策略。 |
+
+## 6. `knowagent-knowledge`
+
+| 文件 | 当前作用 | 后续使用方式 |
+|---|---|---|
+| `knowagent-knowledge/pom.xml` | 知识库模块依赖定义，依赖 security、model 和 common。 | 后续加入解析器、数据库和 Milvus 适配实现。 |
+| `.../knowledge/package-info.java` | 声明知识入库与检索模块边界。 | 保持业务能力说明。 |
+| `.../knowledge/document/ParseSource.java` | 描述待解析文件的来源、名称、类型和输入流。 | MinIO 下载后传给解析器。 |
+| `.../knowledge/document/ParsedSection.java` | 表示解析后的章节及页码等元数据。 | 保留引用定位信息，供分块继承。 |
+| `.../knowledge/document/ParsedDocument.java` | 文档解析结果，聚合多个章节。 | 作为解析到分块之间的标准格式。 |
+| `.../knowledge/document/DocumentParser.java` | 文档解析端口。 | Tika/PDFBox/POI 或外部 MinerU 适配器按 MIME 类型实现。 |
+| `.../knowledge/chunk/ChunkPolicy.java` | 分块策略参数，如块大小和重叠长度。 | 知识库可保存独立策略，并在任务执行时读取。 |
+| `.../knowledge/chunk/ChunkDraft.java` | 尚未持久化的文本块和元数据。 | 生成 embedding 后转成数据库记录与 VectorChunk。 |
+| `.../knowledge/chunk/Chunker.java` | 文本分块端口。 | 实现递归字符、Token 或标题感知分块。 |
+| `.../knowledge/vector/VectorChunk.java` | 写入向量库的 chunk、向量和租户过滤元数据。 | Milvus 适配器将它映射为 collection entity。 |
+| `.../knowledge/vector/VectorQuery.java` | 向量检索请求，包含租户、知识库、查询向量和 topK。 | 所有检索必须通过其过滤条件实现租户隔离。 |
+| `.../knowledge/vector/VectorHit.java` | 向量命中结果，包含 chunk 标识、文本、分数和元数据。 | RAG 上下文和引用来源使用。 |
+| `.../knowledge/vector/VectorStoreGateway.java` | 向量写入、删除和检索端口。 | 由 Milvus SDK/Spring AI VectorStore 适配器实现。 |
+
+## 7. `knowagent-agent-runtime`
+
+| 文件 | 当前作用 | 后续使用方式 |
+|---|---|---|
+| `knowagent-agent-runtime/pom.xml` | Agent 运行时模块依赖定义。 | 运行时只依赖领域端口，不直接访问 Web Controller。 |
+| `.../agent/package-info.java` | 声明 Agent 编排、状态机和事件边界。 | 保持模块级说明。 |
+| `.../agent/run/AgentRequestStatus.java` | 请求排队阶段状态：排队、分发、取消、拒绝、失败。 | 请求表状态机和 API 返回值共用。 |
+| `.../agent/run/AgentRunStatus.java` | 执行阶段状态：等待、运行、中断、完成、失败、取消。 | Run 表、Worker 和 SSE 状态保持一致。 |
+| `.../agent/run/AgentRunContext.java` | 一次运行所需的租户、用户、Agent、会话、请求、Run 和问题。 | Worker 加载数据库配置后构造。 |
+| `.../agent/run/RunResult.java` | Agent 执行最终结果。 | 持久化助手消息、引用和终态。 |
+| `.../agent/run/AgentOrchestrator.java` | Agent 主编排端口。 | 实现检索、Prompt、模型流、工具调用、审批和状态转换。 |
+| `.../agent/checkpoint/AgentCheckpoint.java` | 可恢复执行检查点的数据类型。 | 保存步骤、状态和恢复所需载荷。 |
+| `.../agent/checkpoint/CheckpointStore.java` | 检查点保存与读取端口。 | PostgreSQL 或 Redis 实现，中断/恢复流程调用。 |
+| `.../agent/event/RunEvent.java` | 统一运行事件，覆盖模型增量、工具、审批和终态。 | 写入可回放事件存储并推送 SSE。 |
+| `.../agent/event/RunEventPublisher.java` | Run 事件发布端口。 | Outbox/Redis Streams/SSE 适配器实现。 |
+| `.../agent/job/JobEnvelope.java` | 异步任务消息信封，携带任务 ID、类型、租户和载荷。 | Redis Stream 消息使用，支持幂等键。 |
+| `.../agent/job/JobDispatcher.java` | 异步任务投递端口。 | 事务提交后由 Outbox 发布器调用。 |
+| `.../agent/run/AgentStatusTest.java` | 验证 Request 与 Run 状态的终态判定规则。 | 状态机扩展时同步增加合法转换测试。 |
+
+## 8. `knowagent-extension`
+
+| 文件 | 当前作用 | 后续使用方式 |
+|---|---|---|
+| `knowagent-extension/pom.xml` | 扩展模块依赖定义。 | 后续承载 Tool、Skill 和 MCP 适配。 |
+| `.../extension/package-info.java` | 声明扩展系统边界。 | 保持统一扩展入口说明。 |
+| `.../extension/tool/ToolScope.java` | 定义工具授权范围。 | 按系统、租户、Agent 或 Run 做授权判断。 |
+| `.../extension/tool/ToolDefinition.java` | 工具名称、描述、参数 Schema 和权限要求。 | 注册本地工具或映射 MCP 工具描述。 |
+| `.../extension/tool/ToolInvocation.java` | 一次工具调用请求及上下文。 | Agent Runtime 从模型 tool call 转换而来。 |
+| `.../extension/tool/ToolResult.java` | 工具执行结果及错误信息。 | 转为 tool 消息继续模型循环，并保存审计。 |
+| `.../extension/tool/ToolRegistry.java` | 工具注册、查询和执行端口。 | 实现按 Run 授权、超时、隔离和动态加载。 |
+
+## 9. `knowagent-workspace`
+
+| 文件 | 当前作用 | 后续使用方式 |
+|---|---|---|
+| `knowagent-workspace/pom.xml` | 工作区与对象存储模块依赖定义。 | 后续加入 MinIO SDK 适配。 |
+| `.../workspace/package-info.java` | 声明虚拟工作区和文件存储边界。 | 保持路径安全规则说明。 |
+| `.../workspace/path/VirtualPath.java` | 规范化虚拟路径并拒绝 `..` 路径穿越。 | 所有 Agent 文件访问先转换为该类型。 |
+| `.../workspace/storage/ObjectKey.java` | 对象存储键值对象。 | 统一 tenant/workspace/file 的键命名。 |
+| `.../workspace/storage/StorageCommand.java` | 上传对象所需租户、键、类型、大小和输入流。 | API 上传与内部产物保存共同使用。 |
+| `.../workspace/storage/StoredObject.java` | 已存对象的标识、类型、大小等结果。 | 数据库附件记录引用该结果。 |
+| `.../workspace/storage/ObjectStorageGateway.java` | 对象上传、读取、删除等存储端口。 | MinIO 适配器实现，业务模块不直接依赖 SDK。 |
+| `.../workspace/path/VirtualPathTest.java` | 验证路径规范化和穿越攻击拦截。 | 增加 Windows 分隔符、空路径和编码边界测试。 |
+
+## 10. `knowagent-observability`
+
+| 文件 | 当前作用 | 后续使用方式 |
+|---|---|---|
+| `knowagent-observability/pom.xml` | 任务、审计、指标和评估模块依赖定义。 | 后续加入 Micrometer、追踪和评估实现。 |
+| `.../observability/package-info.java` | 声明可观测与评估能力边界。 | 保持模块级说明。 |
+| `.../observability/task/TaskStatus.java` | 文件解析等后台任务的统一状态。 | 与任务表、前端任务列表和重试逻辑共用。 |
+
+## 11. `knowagent-api`
+
+| 文件 | 当前作用 | 后续使用方式 |
+|---|---|---|
+| `knowagent-api/pom.xml` | 聚合全部业务模块并引入 WebFlux、Security、数据库、Redis、Flyway 等运行依赖。 | Controller、请求 DTO、认证过滤器和基础设施 Bean 在此装配。 |
+| `.../api/KnowAgentApiApplication.java` | HTTP API 进程的 Spring Boot 启动入口。 | 保持薄启动类，只做组件扫描与应用启动。 |
+| `.../api/config/SecurityBootstrapConfiguration.java` | 当前开发期 Security 占位配置，放行健康检查和系统信息接口。 | 替换为 JWT、RBAC、租户上下文和统一未认证响应。 |
+| `.../api/system/SystemInfoController.java` | 提供 `/api/v1/system/info`，用于验证 API 已启动。 | 可增加公开版本信息，不能暴露密钥和内部配置。 |
+| `.../resources/application.yml` | API 端口、数据源、Redis、Flyway、Actuator 和日志配置。 | 通过环境变量覆盖，不在文件中写生产密码。 |
+| `.../resources/db/migration/V1__baseline.sql` | Flyway 基线占位迁移，目前只验证迁移链可运行。 | 下一步增加租户、用户、角色等真实版本化迁移。 |
+
+## 12. `knowagent-worker`
+
+| 文件 | 当前作用 | 后续使用方式 |
+|---|---|---|
+| `knowagent-worker/pom.xml` | 聚合后台处理所需模块和 Redis、数据库运行依赖。 | 加入 Stream 消费者、解析、索引和 Run 执行实现。 |
+| `.../worker/KnowAgentWorkerApplication.java` | 非 Web Worker 的 Spring Boot 启动入口。 | 启动消费者组、任务处理器和恢复扫描器。 |
+| `.../worker/resources/application.yml` | Worker 数据源、Redis、进程类型和日志配置。 | 增加并发数、消费者名、重试和模型超时配置。 |
+
+## 13. `web`
+
+| 文件 | 当前作用 | 后续使用方式 |
+|---|---|---|
+| `web/README.md` | 说明 Vue 3 前端暂时只建立目录边界。 | API 契约稳定后初始化 Vite、TypeScript 和组件库。 |
+| `web/src/apis/.gitkeep` | 保留 API 请求层空目录。 | 放认证、知识库、Agent、会话和任务请求客户端。 |
+| `web/src/components/.gitkeep` | 保留通用组件目录。 | 放消息、引用、上传器和状态展示组件。 |
+| `web/src/composables/.gitkeep` | 保留 Vue Composable 目录。 | 放 SSE、分页、上传和会话状态复用逻辑。 |
+| `web/src/router/.gitkeep` | 保留路由目录。 | 配置登录、知识库、Agent、聊天和管理页面路由。 |
+| `web/src/stores/.gitkeep` | 保留 Pinia 状态目录。 | 放用户、模型配置、会话和任务状态。 |
+| `web/src/views/.gitkeep` | 保留页面目录。 | 实现登录、知识库管理、Agent 配置、聊天和任务页面。 |
+
+## 14. 阅读顺序
+
+建议先读 `pom.xml` 和 `docs/architecture.md` 理解模块边界，再读 common 中的基础类型、model/knowledge 的网关接口、agent-runtime 的状态和事件，最后查看 api/worker 如何装配。真正开始编码时，第一条实现链建议是：安全表迁移 -> JWT -> 租户上下文 -> 知识库 CRUD，而不是先实现 Agent 编排。

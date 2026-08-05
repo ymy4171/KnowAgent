@@ -1,0 +1,9 @@
+.git
+.idea
+.vscode
+**/target
+web/node_modules
+web/dist
+docker/volumes
+.env
+*.log

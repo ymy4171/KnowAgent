@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: knowagent-worker
+  main:
+    web-application-type: none
+  datasource:
+    url: ${POSTGRES_URL:jdbc:postgresql://localhost:5432/knowagent}
+    username: ${POSTGRES_USER:knowagent}
+    password: ${POSTGRES_PASSWORD:knowagent_dev}
+  data:
+    redis:
+      url: ${REDIS_URL:redis://localhost:6379}
+  flyway:
+    enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+
+logging:
+  level:
+    root: INFO
+    com.knowagent: INFO
+
