@@ -1,14 +1,19 @@
 package com.knowagent.observability.task;
 
 public enum TaskStatus {
-    PENDING,
-    RUNNING,
-    SUCCEEDED,
-    FAILED,
-    CANCELLED;
+    PENDING(false),
+    RUNNING(false),
+    SUCCEEDED(true),
+    FAILED(true),
+    CANCELLED(true);
+
+    private final boolean terminal;
+
+    TaskStatus(boolean terminal) {
+        this.terminal = terminal;
+    }
 
     public boolean isTerminal() {
-        return this == SUCCEEDED || this == FAILED || this == CANCELLED;
+        return terminal;
     }
 }
-

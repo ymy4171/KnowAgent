@@ -1,14 +1,19 @@
 package com.knowagent.agent.run;
 
 public enum AgentRequestStatus {
-    QUEUED,
-    DISPATCHED,
-    CANCELLED,
-    REJECTED,
-    FAILED;
+    QUEUED(false),
+    DISPATCHED(false),
+    CANCELLED(true),
+    REJECTED(true),
+    FAILED(true);
+
+    private final boolean terminal;
+
+    AgentRequestStatus(boolean terminal) {
+        this.terminal = terminal;
+    }
 
     public boolean isTerminal() {
-        return this == CANCELLED || this == REJECTED || this == FAILED;
+        return terminal;
     }
 }
-

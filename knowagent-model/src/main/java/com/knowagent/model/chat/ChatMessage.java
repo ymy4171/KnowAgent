@@ -1,12 +1,6 @@
 package com.knowagent.model.chat;
 
-import java.util.Objects;
+public sealed interface ChatMessage permits TextChatMessage, AssistantToolCallMessage, ToolResultMessage {
 
-public record ChatMessage(ChatRole role, String content) {
-
-    public ChatMessage {
-        Objects.requireNonNull(role, "role must not be null");
-        Objects.requireNonNull(content, "content must not be null");
-    }
+    ChatRole role();
 }
-

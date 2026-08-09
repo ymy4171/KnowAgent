@@ -4,10 +4,9 @@ import java.io.InputStream;
 
 public interface ObjectStorageGateway {
 
-    StoredObject put(StorageCommand command);
+    StoredObject put(PutObjectCommand command);
 
-    InputStream get(ObjectKey key);
+    InputStream get(GetObjectCommand command);
 
-    void delete(ObjectKey key);
+    void delete(DeleteObjectCommand command);
 }
-

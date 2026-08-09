@@ -1,35 +1,188 @@
-# KnowAgent Module Architecture
+# KnowAgent 系统架构
 
-## Dependency Direction
+本文是 KnowAgent 当前架构的唯一真相源，负责模块边界、运行链路、状态约束和基础设施职责。项目范围与里程碑见 [PLAN.md](../PLAN.md)，原 Yuxi 文件与接口迁移见 [YUXI_REFACTOR_GUIDE.md](../YUXI_REFACTOR_GUIDE.md)。
 
-```text
-common
-  ↑
-security
-  ↑
-model ───────┐
-  ↑          │
-knowledge    │
-  ↑          │
-agent-runtime│
-  ↑          │
-extension    │
-             │
-workspace ───┤
-observability┤
-             ↓
-       api / worker
+## 1. 系统组件
+
+```mermaid
+flowchart LR
+    User["Vue 用户端"] --> API["knowagent-api / Spring MVC"]
+    API --> PG[(PostgreSQL)]
+    API --> MinIO[(MinIO)]
+    API --> Outbox["事务 Outbox"]
+    Outbox --> Redis[(Redis Streams)]
+    Redis --> Worker["knowagent-worker"]
+    Worker --> Runtime["Agent Runtime"]
+    Worker --> Parser["Document Parser"]
+    Runtime --> Model["Chat / Embedding / Rerank Gateway"]
+    Runtime --> Tools["ToolRegistry / MCP"]
+    Parser --> Model
+    Worker --> Milvus[(Milvus)]
+    Worker --> PG
+    Runtime --> EventStream["RunEventPublisher"]
+    EventStream --> Redis
+    API --> EventStream
 ```
 
-The diagram is conceptual. Maven dependencies are kept one-way:
+API 负责认证、参数校验、事务入口和 SSE 连接；Worker 负责耗时任务和 Agent Run；领域模块不依赖 API 或 Worker。
 
-- Domain modules never depend on `knowagent-api` or `knowagent-worker`.
-- A module never calls another module's Mapper directly.
-- Framework and SDK types remain inside adapters.
-- PostgreSQL is the source of truth for business state.
-- Redis Streams carry jobs and short-lived run events.
-- API and worker share the same domain modules but have separate process lifecycles.
+## 2. 模块依赖矩阵
 
-## First Architecture Slice
+| 模块 | 可以依赖 | 禁止依赖 | 主要职责 |
+|---|---|---|---|
+| `common` | 无 | 所有业务模块 | 通用错误、租户 ID、领域事件 |
+| `security` | common | api、worker | Principal、认证授权边界 |
+| `model` | common、security | knowledge、runtime | Chat、Embedding、Rerank 端口 |
+| `knowledge` | common、security、model | runtime、api | 解析、分块、向量检索契约 |
+| `agent-runtime` | common、security、model、knowledge | api、worker | Run 状态、编排、事件和检查点 |
+| `extension` | common、security、agent-runtime | api、worker | Tools、Skills、MCP、SubAgent |
+| `workspace` | common、security | api、worker | 对象存储、附件、虚拟路径 |
+| `observability` | common、security | api、worker | 任务、审计、指标和评估 |
+| `api` | 所有业务模块 | worker | HTTP、Spring Security、SSE、事务装配 |
+| `worker` | 所有业务模块 | api | Outbox 发布、Stream 消费和后台执行 |
 
-The initial scaffold contains stable ports and status types only. Controllers, mappers, adapters and database migrations are added by feature slice so that empty abstractions do not grow ahead of real behavior.
+约束：禁止 Controller 直接调用 Mapper；禁止跨模块调用 Mapper；供应商 SDK 只能出现在基础设施适配器；自定义 SQL 必须显式校验 tenant。
+
+## 3. 数据职责
+
+| 组件 | 保存内容 | 不承担的职责 |
+|---|---|---|
+| PostgreSQL | 用户、知识库元数据、chunk、会话、消息、Request、Run、Task、Checkpoint、Outbox | 大文件和向量近邻索引 |
+| Redis Streams | 任务投递、消费者组状态、短期 Run 事件和 SSE 游标 | Run 最终状态的唯一副本 |
+| MinIO | 原始文档、附件、Agent 产物 | 权限事实和业务状态 |
+| Milvus | embedding、chunk ID 和租户/知识库过滤字段 | chunk 正文的最终事实 |
+| Neo4j | 后续阶段的图实体和关系 | 普通 RAG 可用状态 |
+
+PostgreSQL 始终是最终事实来源。Redis、Milvus 和 Neo4j 的数据必须可以依据 PostgreSQL 重建或校验。
+
+## 4. Agent 执行与事件
+
+`AgentOrchestrator.execute` 返回 `Flux<RunEvent>`。每次执行必须产生一个开始事件、零到多个中间事件，以及一个且仅一个终态事件。
+
+`RunEvent.eventId` 是 UUID，用于业务幂等和审计；`PublishedRunEvent.cursor` 是 Redis Stream/SSE 游标，用于排序和 `Last-Event-ID` 重连，二者不得混用。
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING
+    PENDING --> RUNNING: Worker 开始执行
+    PENDING --> FAILED: 初始化失败
+    PENDING --> CANCELLED: 执行前取消
+    RUNNING --> COMPLETED: 正常结束
+    RUNNING --> FAILED: 不可恢复错误
+    RUNNING --> CANCELLED: 用户取消
+    RUNNING --> INTERRUPTED: 等待审批或外部输入
+    INTERRUPTED --> RUNNING: resume 成功
+    INTERRUPTED --> FAILED: 超时或恢复失败
+    INTERRUPTED --> CANCELLED: 用户或管理员取消
+    COMPLETED --> [*]
+    FAILED --> [*]
+    CANCELLED --> [*]
+```
+
+`INTERRUPTED` 不是终态。终态不可回退；相同状态的重复写入按幂等处理；其他非法转换必须拒绝并记录审计事件。
+
+## 5. 用户提问链路
+
+```mermaid
+sequenceDiagram
+    actor User as 用户
+    participant API
+    participant PG as PostgreSQL
+    participant Redis as Redis Streams
+    participant Worker
+    participant Runtime as AgentOrchestrator
+    participant Model as ChatModelGateway
+    participant Tools as ToolRegistry
+
+    User->>API: POST /api/v1/agents/{id}/requests
+    API->>PG: 锁定 Conversation
+    API->>PG: 事务写 Message、Request、Run、Outbox
+    API-->>User: 202 Accepted + requestId/runId
+    API->>Redis: Outbox Publisher 发布任务
+    Worker->>Redis: 消费并 ACK 前保持 pending
+    Worker->>Runtime: execute(context)
+    Runtime-->>Worker: Flux<RunEvent>
+    Runtime->>Model: stream(ChatCommand)
+    Model-->>Runtime: ModelEvent 增量
+    opt 模型请求工具
+        Runtime->>Tools: invoke(ToolInvocation)
+        Tools-->>Runtime: ToolResult
+        Runtime->>Model: ToolResultMessage
+    end
+    Worker->>PG: 持久化消息、Run 状态和事件索引
+    Worker->>Redis: 发布 PublishedRunEvent
+    API-->>User: SSE id=cursor, data=RunEvent
+```
+
+## 6. 文档入库链路
+
+```mermaid
+sequenceDiagram
+    actor User as 用户
+    participant API
+    participant MinIO
+    participant PG as PostgreSQL
+    participant Redis as Redis Streams
+    participant Worker
+    participant Parser
+    participant Chunker
+    participant Embed as EmbeddingGateway
+    participant Milvus
+
+    User->>API: 上传知识库文件
+    API->>MinIO: put(PutObjectCommand)
+    API->>PG: 事务写 File、Task、Outbox
+    API-->>User: 202 Accepted + taskId
+    API->>Redis: 发布索引任务
+    Worker->>Parser: parse(ParseSource)
+    Parser-->>Worker: ParsedDocument
+    Worker->>Chunker: split(document, policy)
+    Chunker-->>Worker: ChunkDraft 列表
+    Worker->>Embed: embed(text batch)
+    Embed-->>Worker: vectors
+    Worker->>PG: 幂等写入 chunk 与索引状态
+    Worker->>Milvus: upsert(VectorChunk)
+    Worker->>PG: Task/File 更新为 SUCCEEDED/READY
+```
+
+失败必须记录当前阶段、错误码和可重试性；重复任务使用 file/chunk 幂等键，不得产生重复向量。
+
+## 7. SSE 断线恢复链路
+
+```mermaid
+sequenceDiagram
+    actor User as 用户
+    participant API
+    participant Redis as Run Event Stream
+    participant PG as PostgreSQL
+
+    User->>API: GET /agent-runs/{id}/events + Last-Event-ID
+    API->>Redis: replay(runId, lastEventId)
+    alt 游标仍在保留窗口
+        Redis-->>API: cursor 之后的 PublishedRunEvent
+        API-->>User: 顺序补发后继续实时订阅
+    else 游标已过期或 Stream 缺失
+        API->>PG: 查询 Run、消息和持久化事件索引
+        PG-->>API: 当前事实状态与可恢复快照
+        API-->>User: snapshot/reset 事件
+        API->>Redis: 从当前最新游标继续订阅
+    end
+```
+
+API 必须校验 runId 所属 tenant。客户端收到 reset 后用快照替换本地状态，不能把快照重复追加为增量。
+
+## 8. 工具消息
+
+`ChatMessage` 是密封接口：`TextChatMessage` 表示普通文本，`AssistantToolCallMessage` 保存有序工具调用，`ToolResultMessage` 通过 `toolCallId` 关联结果。供应商适配器负责与 Spring AI 消息互转，核心模型不依赖供应商私有类型。
+
+## 9. 对象存储隔离
+
+`ObjectStorageGateway` 的 put/get/delete 只接受带 `TenantId` 的命令。MinIO 适配器统一生成 `<tenantId>/<objectKey>`，调用方不能提供完整物理键；数据库附件记录同时保存 tenant、object key、散列和大小。
+
+## 10. 架构决策
+
+- [ADR 0001：Maven 多模块单体](adr/0001-modular-monolith.md)
+- [ADR 0002：PostgreSQL Outbox 与 Redis Streams](adr/0002-outbox-redis-streams.md)
+- [ADR 0003：MyBatis-Plus](adr/0003-mybatis-plus.md)
+- [ADR 0004：Spring MVC 与 Reactor Flux](adr/0004-spring-mvc.md)
+- [ADR 0005：Milvus](adr/0005-milvus.md)

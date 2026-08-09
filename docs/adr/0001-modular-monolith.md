@@ -1,7 +1,39 @@
-# ADR 0001: Maven Multi-Module Modular Monolith
+# ADR 0001：采用 Maven 多模块单体
 
-Status: Accepted
+- 状态：已接受
+- 日期：2026-08-05
+- 作者：KnowAgent 项目组
+- 评审人：项目维护者
 
-KnowAgent uses one repository and one PostgreSQL database, with API and worker as separately executable processes. Business capabilities are isolated in Maven modules and communicate through application services or ports.
+## 上下文
 
-This keeps transactions and local development straightforward while making ownership and dependency direction visible in interviews and code review.
+KnowAgent 同时包含认证、知识库、模型、Agent Runtime、扩展、工作区和可观测能力。项目需要清晰边界，但 12 周内还要完成可演示主链，过早拆分微服务会引入分布式事务、服务发现和部署成本。
+
+## 决策驱动因素
+
+- 保留 PostgreSQL 本地事务和 Outbox 原子性。
+- 让模块边界、依赖方向和代码所有权可见。
+- API 与 Worker 可以独立运行和扩缩容。
+- 本地开发和 Docker Compose 部署保持简单。
+
+## 备选方案
+
+1. 单 Maven 模块：开发简单，但边界只能依赖包约定，容易跨层调用。
+2. Maven 多模块单体：通过编译依赖约束边界，同时保留进程内调用和本地事务。
+3. 微服务：隔离最强，但当前规模下增加网络协议、分布式一致性和运维负担。
+
+## 决策
+
+采用一个仓库、一个 PostgreSQL 业务数据库和十个 Maven 模块。`knowagent-api` 与 `knowagent-worker` 是独立进程，其他模块是普通 JAR。跨模块协作只通过应用服务、端口或领域事件，禁止跨模块调用 Mapper。
+
+## 后果
+
+正向：事务和调试简单；依赖边界可由 Maven 校验；后续可按模块拆服务。
+
+负向：共享数据库仍可能产生表级耦合；单仓库构建时间随功能增长；模块不能独立发布。
+
+风险控制：自定义 SQL 必须显式校验租户；通过架构测试禁止反向依赖；数据库表按模块明确归属。
+
+## 复审条件
+
+当单模块需要独立扩缩容、独立发布，或团队边界要求独立数据所有权时，重新评估服务拆分。

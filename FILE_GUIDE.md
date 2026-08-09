@@ -17,6 +17,9 @@
 | `pom.xml` | 父 POM；声明 10 个模块、Java 21、依赖版本、测试与 Enforcer 规则。 | 所有跨模块版本在这里集中管理。 |
 | `docker-compose.yml` | 编排 API、Worker、PostgreSQL、Redis、MinIO、Milvus、etcd 和可选 Neo4j。 | 后续增加健康检查、初始化脚本和生产配置覆盖。 |
 | `README.md` | 项目入口，说明模块、构建、运行方式和当前完成度。 | 每完成一个可演示阶段同步更新。 |
+| `PLAN.md` | 定义 12 周交付范围、开发阶段和验收入口。 | 只维护范围和里程碑，架构细节统一链接到架构文档。 |
+| `YUXI_REFACTOR_GUIDE.md` | 记录 Yuxi 功能、旧代码位置、迁移去向和 Java 重写策略。 | 迁移功能时用于追溯原实现，不作为新系统接口的唯一真相源。 |
+| `TEST_PLAN.md` | 按能力域整理可勾选的单元、集成、并发、安全和端到端测试。 | 每完成一个实现切片同步勾选，并保留 CI 证据。 |
 | `FILE_GUIDE.md` | 当前文件职责索引。 | 新增、移动或删除手写文件时同步维护。 |
 
 ## 2. Docker 与架构文档
@@ -25,9 +28,12 @@
 |---|---|---|
 | `docker/api.Dockerfile` | 分阶段构建 API 可执行 JAR，并以精简 JRE 镜像运行。 | 增加非 root 用户、探针和 JVM 生产参数。 |
 | `docker/worker.Dockerfile` | 分阶段构建并运行异步 Worker。 | 与 API 独立扩缩容，配置不同资源限制。 |
-| `docs/architecture.md` | 描述模块依赖、核心端口和请求/Run 主链路。 | 补充组件图、时序图和部署拓扑。 |
+| `docs/architecture.md` | 架构唯一真相源，包含组件图、模块依赖、状态机和三条核心时序。 | 架构或运行模型变化时优先更新，再由计划和指南引用。 |
 | `docs/adr/0001-modular-monolith.md` | 记录先采用模块化单体而非微服务的决策。 | 架构拆分时新增 ADR，不直接改写历史结论。 |
 | `docs/adr/0002-outbox-redis-streams.md` | 记录 PostgreSQL Outbox + Redis Streams 的任务投递决策。 | 实现后补充失败恢复和一致性验证结果。 |
+| `docs/adr/0003-mybatis-plus.md` | 记录选择 MyBatis-Plus 而非 JPA/Hibernate 的原因与代价。 | 数据访问策略变化时新增替代 ADR。 |
+| `docs/adr/0004-spring-mvc.md` | 记录阻塞式持久化栈下选择 Spring MVC，并在内部保留 Reactor 流的决策。 | 若未来切换全响应式数据栈，重新评审该决策。 |
+| `docs/adr/0005-milvus.md` | 记录选择 Milvus 而非 pgvector 或 Elasticsearch 的向量检索决策。 | 以检索规模和运维数据作为复审依据。 |
 
 ## 3. `knowagent-common`
 
@@ -55,7 +61,12 @@
 | `knowagent-model/pom.xml` | 模型模块依赖定义，引入 Spring AI 模型抽象。 | 添加具体供应商适配器时保持核心端口不变。 |
 | `.../model/package-info.java` | 声明模型网关模块边界。 | 防止 Agent 直接依赖供应商 SDK。 |
 | `.../model/chat/ChatRole.java` | 定义 system、user、assistant、tool 等消息角色。 | 做供应商消息格式映射。 |
-| `.../model/chat/ChatMessage.java` | 一条标准化聊天消息及其元数据。 | Prompt 组装和历史消息加载使用。 |
+| `.../model/chat/ChatMessage.java` | 密封消息接口，统一文本、工具调用和工具结果消息。 | ChatCommand 和供应商适配器只依赖该抽象。 |
+| `.../model/chat/TextChatMessage.java` | SYSTEM、USER、ASSISTANT 的普通文本消息。 | Prompt 和历史文本消息使用，禁止 TOOL 角色。 |
+| `.../model/chat/ToolCall.java` | 工具调用 ID、工具名和 JSON 参数。 | 关联模型调用与后续工具结果。 |
+| `.../model/chat/AssistantToolCallMessage.java` | 助手发起的一组有序工具调用。 | 支持单次模型响应包含多个 Tool Call。 |
+| `.../model/chat/ToolResultMessage.java` | 与 toolCallId 关联的工具执行结果。 | 作为 TOOL 消息继续模型循环。 |
+| `.../model/chat/ChatMessageTest.java` | 验证消息角色约束、工具关联和多调用顺序。 | 消息模型扩展时同步维护。 |
 | `.../model/chat/ModelOptions.java` | 标准化 temperature、maxTokens 等生成参数。 | 后续可增加 stop、topP，但避免暴露供应商私有字段。 |
 | `.../model/chat/ChatCommand.java` | 一次模型调用命令，包含模型、消息和生成选项。 | Agent Runtime 构造，模型适配器消费。 |
 | `.../model/chat/ModelEvent.java` | 统一流式模型事件：文本增量、工具调用、用量和完成。 | 映射到 RunEvent，再通过 SSE 输出。 |
@@ -89,17 +100,20 @@
 | `knowagent-agent-runtime/pom.xml` | Agent 运行时模块依赖定义。 | 运行时只依赖领域端口，不直接访问 Web Controller。 |
 | `.../agent/package-info.java` | 声明 Agent 编排、状态机和事件边界。 | 保持模块级说明。 |
 | `.../agent/run/AgentRequestStatus.java` | 请求排队阶段状态：排队、分发、取消、拒绝、失败。 | 请求表状态机和 API 返回值共用。 |
-| `.../agent/run/AgentRunStatus.java` | 执行阶段状态：等待、运行、中断、完成、失败、取消。 | Run 表、Worker 和 SSE 状态保持一致。 |
+| `.../agent/run/AgentRunStatus.java` | 执行阶段状态及合法转换规则；`INTERRUPTED` 可恢复或失败/取消。 | Run 表、Worker 和 SSE 状态保持一致，所有状态更新先校验转换。 |
 | `.../agent/run/AgentRunContext.java` | 一次运行所需的租户、用户、Agent、会话、请求、Run 和问题。 | Worker 加载数据库配置后构造。 |
-| `.../agent/run/RunResult.java` | Agent 执行最终结果。 | 持久化助手消息、引用和终态。 |
-| `.../agent/run/AgentOrchestrator.java` | Agent 主编排端口。 | 实现检索、Prompt、模型流、工具调用、审批和状态转换。 |
+
+| `.../agent/run/AgentOrchestrator.java` | 返回 `Flux<RunEvent>` 的流式编排端口。 | Worker 按顺序消费、持久化和发布运行事件。 |
 | `.../agent/checkpoint/AgentCheckpoint.java` | 可恢复执行检查点的数据类型。 | 保存步骤、状态和恢复所需载荷。 |
 | `.../agent/checkpoint/CheckpointStore.java` | 检查点保存与读取端口。 | PostgreSQL 或 Redis 实现，中断/恢复流程调用。 |
-| `.../agent/event/RunEvent.java` | 统一运行事件，覆盖模型增量、工具、审批和终态。 | 写入可回放事件存储并推送 SSE。 |
-| `.../agent/event/RunEventPublisher.java` | Run 事件发布端口。 | Outbox/Redis Streams/SSE 适配器实现。 |
+| `.../agent/event/RunEvent.java` | 实现 DomainEvent 的运行事件，使用 UUID 作为业务事件 ID。 | 覆盖模型增量、工具、审批和终态。 |
+| `.../agent/event/PublishedRunEvent.java` | 组合运行事件和 Redis/SSE 字符串游标。 | 将领域事件身份与 Last-Event-ID 分离。 |
+| `.../agent/event/RunEventPublisher.java` | 响应式发布和回放 PublishedRunEvent 的端口。 | Redis Streams 适配器返回游标，SSE 使用游标重连。 |
 | `.../agent/job/JobEnvelope.java` | 异步任务消息信封，携带任务 ID、类型、租户和载荷。 | Redis Stream 消息使用，支持幂等键。 |
 | `.../agent/job/JobDispatcher.java` | 异步任务投递端口。 | 事务提交后由 Outbox 发布器调用。 |
-| `.../agent/run/AgentStatusTest.java` | 验证 Request 与 Run 状态的终态判定规则。 | 状态机扩展时同步增加合法转换测试。 |
+| `.../agent/run/AgentStatusTest.java` | 验证 Request/Run 终态标志、INTERRUPTED 恢复和终态不可逆。 | 状态机扩展时同步维护。 |
+| `.../agent/run/AgentOrchestratorContractTest.java` | 验证事件顺序和订阅取消传播。 | 流式编排实现必须满足该契约。 |
+| `.../agent/event/RunEventTest.java` | 验证领域事件 UUID、聚合 ID、不可变元数据和 SSE 游标。 | 事件存储实现前的契约基线。 |
 
 ## 8. `knowagent-extension`
 
@@ -121,10 +135,13 @@
 | `.../workspace/package-info.java` | 声明虚拟工作区和文件存储边界。 | 保持路径安全规则说明。 |
 | `.../workspace/path/VirtualPath.java` | 规范化虚拟路径并拒绝 `..` 路径穿越。 | 所有 Agent 文件访问先转换为该类型。 |
 | `.../workspace/storage/ObjectKey.java` | 对象存储键值对象。 | 统一 tenant/workspace/file 的键命名。 |
-| `.../workspace/storage/StorageCommand.java` | 上传对象所需租户、键、类型、大小和输入流。 | API 上传与内部产物保存共同使用。 |
-| `.../workspace/storage/StoredObject.java` | 已存对象的标识、类型、大小等结果。 | 数据库附件记录引用该结果。 |
-| `.../workspace/storage/ObjectStorageGateway.java` | 对象上传、读取、删除等存储端口。 | MinIO 适配器实现，业务模块不直接依赖 SDK。 |
+| `.../workspace/storage/PutObjectCommand.java` | 带租户的对象上传命令。 | API 上传与内部产物保存共同使用。 |
+| `.../workspace/storage/GetObjectCommand.java` | 带租户的对象读取命令。 | 禁止仅凭 ObjectKey 跨租户读取。 |
+| `.../workspace/storage/DeleteObjectCommand.java` | 带租户的对象删除命令。 | 禁止仅凭 ObjectKey 跨租户删除。 |
+| `.../workspace/storage/StoredObject.java` | 包含租户、对象键、类型、大小和散列的存储结果。 | 数据库附件记录引用该结果。 |
+| `.../workspace/storage/ObjectStorageGateway.java` | 只接受租户命令的上传、读取和删除端口。 | MinIO 适配器统一生成 tenantId/objectKey 物理键。 |
 | `.../workspace/path/VirtualPathTest.java` | 验证路径规范化和穿越攻击拦截。 | 增加 Windows 分隔符、空路径和编码边界测试。 |
+| `.../workspace/storage/ObjectStorageCommandTest.java` | 验证所有存储操作必须携带租户并校验上传元数据。 | MinIO 适配器测试继续覆盖物理键隔离。 |
 
 ## 10. `knowagent-observability`
 
@@ -132,15 +149,16 @@
 |---|---|---|
 | `knowagent-observability/pom.xml` | 任务、审计、指标和评估模块依赖定义。 | 后续加入 Micrometer、追踪和评估实现。 |
 | `.../observability/package-info.java` | 声明可观测与评估能力边界。 | 保持模块级说明。 |
-| `.../observability/task/TaskStatus.java` | 文件解析等后台任务的统一状态。 | 与任务表、前端任务列表和重试逻辑共用。 |
+| `.../observability/task/TaskStatus.java` | 使用显式终态标志的后台任务状态。 | 与任务表、前端任务列表和重试逻辑共用。 |
+| `.../observability/task/TaskStatusTest.java` | 验证任务状态的终态标志。 | 新增状态时防止遗漏终态语义。 |
 
 ## 11. `knowagent-api`
 
 | 文件 | 当前作用 | 后续使用方式 |
 |---|---|---|
-| `knowagent-api/pom.xml` | 聚合全部业务模块并引入 WebFlux、Security、数据库、Redis、Flyway 等运行依赖。 | Controller、请求 DTO、认证过滤器和基础设施 Bean 在此装配。 |
+| `knowagent-api/pom.xml` | 聚合全部业务模块并引入 Spring MVC、Security、数据库、Redis、Flyway 等运行依赖。 | Controller、SseEmitter、请求 DTO、认证过滤器和基础设施 Bean 在此装配。 |
 | `.../api/KnowAgentApiApplication.java` | HTTP API 进程的 Spring Boot 启动入口。 | 保持薄启动类，只做组件扫描与应用启动。 |
-| `.../api/config/SecurityBootstrapConfiguration.java` | 当前开发期 Security 占位配置，放行健康检查和系统信息接口。 | 替换为 JWT、RBAC、租户上下文和统一未认证响应。 |
+| `.../api/config/SecurityBootstrapConfiguration.java` | 基于 Servlet `SecurityFilterChain` 的开发期安全占位配置，放行健康检查和系统信息接口。 | 替换为 JWT、RBAC、租户上下文和统一未认证响应。 |
 | `.../api/system/SystemInfoController.java` | 提供 `/api/v1/system/info`，用于验证 API 已启动。 | 可增加公开版本信息，不能暴露密钥和内部配置。 |
 | `.../resources/application.yml` | API 端口、数据源、Redis、Flyway、Actuator 和日志配置。 | 通过环境变量覆盖，不在文件中写生产密码。 |
 | `.../resources/db/migration/V1__baseline.sql` | Flyway 基线占位迁移，目前只验证迁移链可运行。 | 下一步增加租户、用户、角色等真实版本化迁移。 |

@@ -1,13 +1,13 @@
 package com.knowagent.agent.event;
 
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.util.UUID;
 
 public interface RunEventPublisher {
 
-    String publish(RunEvent event);
+    Mono<PublishedRunEvent> publish(RunEvent event);
 
-    Flux<RunEvent> replay(UUID runId, String lastEventId);
+    Flux<PublishedRunEvent> replay(UUID runId, String lastEventId);
 }
-
