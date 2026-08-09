@@ -53,7 +53,7 @@ API 负责认证、参数校验、事务入口和 SSE 连接；Worker 负责耗�
 | Milvus | embedding、chunk ID 和租户/知识库过滤字段 | chunk 正文的最终事实 |
 | Neo4j | 后续阶段的图实体和关系 | 普通 RAG 可用状态 |
 
-PostgreSQL 始终是最终事实来源。Redis、Milvus 和 Neo4j 的数据必须可以依据 PostgreSQL 重建或校验。
+PostgreSQL 始终是最终事实来源。Redis、Milvus 和 Neo4j 的数据必须可以依据 PostgreSQL 重建或校验。表结构、复合租户外键、锁 SQL 和数据生命周期见 [数据库设计](database-schema.md)。
 
 ## 4. Agent 执行与事件
 

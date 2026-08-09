@@ -29,6 +29,7 @@
 | `docker/api.Dockerfile` | 分阶段构建 API 可执行 JAR，并以精简 JRE 镜像运行。 | 增加非 root 用户、探针和 JVM 生产参数。 |
 | `docker/worker.Dockerfile` | 分阶段构建并运行异步 Worker。 | 与 API 独立扩缩容，配置不同资源限制。 |
 | `docs/architecture.md` | 架构唯一真相源，包含组件图、模块依赖、状态机和三条核心时序。 | 架构或运行模型变化时优先更新，再由计划和指南引用。 |
+| `docs/database-schema.md` | 数据库唯一说明，记录 31 张表、租户复合外键、消息事务、Token 家族、Outbox 和 Chunk 生命周期。 | 写 Mapper、锁查询或新迁移前先核对；结构变化只通过新的 Flyway 版本推进。 |
 | `docs/adr/0001-modular-monolith.md` | 记录先采用模块化单体而非微服务的决策。 | 架构拆分时新增 ADR，不直接改写历史结论。 |
 | `docs/adr/0002-outbox-redis-streams.md` | 记录 PostgreSQL Outbox + Redis Streams 的任务投递决策。 | 实现后补充失败恢复和一致性验证结果。 |
 | `docs/adr/0003-mybatis-plus.md` | 记录选择 MyBatis-Plus 而非 JPA/Hibernate 的原因与代价。 | 数据访问策略变化时新增替代 ADR。 |
@@ -156,12 +157,14 @@
 
 | 文件 | 当前作用 | 后续使用方式 |
 |---|---|---|
-| `knowagent-api/pom.xml` | 聚合全部业务模块并引入 Spring MVC、Security、数据库、Redis、Flyway 等运行依赖。 | Controller、SseEmitter、请求 DTO、认证过滤器和基础设施 Bean 在此装配。 |
+| `knowagent-api/pom.xml` | 聚合全部业务模块并引入 Spring MVC、Security、数据库、Redis、Flyway；`docker-it` Profile 使用 Failsafe 运行 Testcontainers。 | Controller、SseEmitter、请求 DTO、认证过滤器和基础设施 Bean 在此装配；数据库迁移集成测试用 `mvn -Pdocker-it verify` 执行。 |
 | `.../api/KnowAgentApiApplication.java` | HTTP API 进程的 Spring Boot 启动入口。 | 保持薄启动类，只做组件扫描与应用启动。 |
 | `.../api/config/SecurityBootstrapConfiguration.java` | 基于 Servlet `SecurityFilterChain` 的开发期安全占位配置，放行健康检查和系统信息接口。 | 替换为 JWT、RBAC、租户上下文和统一未认证响应。 |
 | `.../api/system/SystemInfoController.java` | 提供 `/api/v1/system/info`，用于验证 API 已启动。 | 可增加公开版本信息，不能暴露密钥和内部配置。 |
 | `.../resources/application.yml` | API 端口、数据源、Redis、Flyway、Actuator 和日志配置。 | 通过环境变量覆盖，不在文件中写生产密码。 |
-| `.../resources/db/migration/V1__baseline.sql` | Flyway 基线占位迁移，目前只验证迁移链可运行。 | 下一步增加租户、用户、角色等真实版本化迁移。 |
+| `.../resources/db/migration/V1__baseline.sql` | 已发布的 Flyway 空基线，用于固定迁移起点。 | 保持内容不变，禁止修改已执行迁移的校验和。 |
+| `.../resources/db/migration/V2__identity_core.sql` 至 `V11__mcp.sql` | 按身份、权限、凭据、模型、知识库、聊天、运行时、异步任务、Skills 和 MCP 创建 31 张 MVP 表。 | 只允许新增更高版本迁移；字段、约束和锁语义以 `docs/database-schema.md` 为准。 |
+| `.../api/database/FlywaySchemaIT.java` | 在 PostgreSQL 16 Testcontainer 中验证迁移、租户约束、Token 家族、Run 并发、Outbox 抢占和事务回滚。 | Docker 可用时通过 `docker-it` Profile 运行；默认构建不启动容器。 |
 
 ## 12. `knowagent-worker`
 
