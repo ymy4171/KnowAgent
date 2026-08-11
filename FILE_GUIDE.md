@@ -18,6 +18,7 @@
 | `docker-compose.yml` | 编排 API、Worker、PostgreSQL、Redis、MinIO、Milvus、etcd 和可选 Neo4j。 | 后续增加健康检查、初始化脚本和生产配置覆盖。 |
 | `README.md` | 项目入口，说明模块、构建、运行方式和当前完成度。 | 每完成一个可演示阶段同步更新。 |
 | `PLAN.md` | 定义 12 周交付范围、开发阶段和验收入口。 | 只维护范围和里程碑，架构细节统一链接到架构文档。 |
+| `DEVELOPMENT_PROMPTS.md` | 提供认证、授权与租户里程碑的分阶段可执行提示词。 | 按顺序一次执行一个提示词，完成验收后再进入下一阶段。 |
 | `YUXI_REFACTOR_GUIDE.md` | 记录 Yuxi 功能、旧代码位置、迁移去向和 Java 重写策略。 | 迁移功能时用于追溯原实现，不作为新系统接口的唯一真相源。 |
 | `TEST_PLAN.md` | 按能力域整理可勾选的单元、集成、并发、安全和端到端测试。 | 每完成一个实现切片同步勾选，并保留 CI 证据。 |
 | `FILE_GUIDE.md` | 当前文件职责索引。 | 新增、移动或删除手写文件时同步维护。 |
@@ -51,9 +52,39 @@
 
 | 文件 | 当前作用 | 后续使用方式 |
 |---|---|---|
-| `knowagent-security/pom.xml` | 安全模块依赖定义，目前仅依赖 common。 | 后续加入 JWT、Spring Security 和持久化适配依赖。 |
+| `knowagent-security/pom.xml` | 安全模块依赖 common，并为模块内持久化适配引入 MyBatis-Plus、Jackson 与 PostgreSQL JDBC。 | 后续加入 JWT、Spring Security 时继续保持 HTTP 依赖不进入该模块。 |
 | `.../security/package-info.java` | 声明认证、授权和租户上下文模块边界。 | 保持为包级架构说明。 |
 | `.../security/principal/TenantPrincipal.java` | 表示已认证用户、租户、角色和权限集合。 | JWT/OIDC/API Key 认证成功后构造，并注入请求上下文。 |
+| `.../security/domain/package-info.java` | 声明身份认证领域层不依赖持久化对象。 | 新增安全领域行为时保持基础设施类型在边界外。 |
+| `.../security/domain/tenant/Tenant.java`、`TenantStatus.java` | 表示租户身份、不可变 JSON settings 及 ACTIVE/SUSPENDED/DISABLED 状态。 | 登录前按 slug 解析租户，状态名保持与数据库 CHECK 一致。 |
+| `.../security/domain/user/User.java`、`UserStatus.java` | 表示本地用户、密码散列、锁定信息和乐观锁版本，并在字符串输出中隐藏密码散列。 | 后续登录应用服务校验状态、密码和失败计数。 |
+| `.../security/domain/role/Role.java`、`RoleStatus.java` | 表示租户角色及不可变权限集合。 | 登录和 RBAC 应用服务加载有效角色后聚合权限。 |
+| `.../security/domain/role/UserRole.java` | 表示用户角色绑定及有效期。 | 管理员初始化和授权写入使用，过期判断不依赖 HTTP 层。 |
+| `.../security/domain/token/RefreshToken.java`、`RefreshTokenStatus.java` | 表示 Refresh Token 家族、所有权、生命周期和版本；字符串输出不包含 token_hash。 | 后续轮换服务必须在事务内锁定并校验租户与用户关系。 |
+| `.../security/application/port/out/package-info.java` | 声明安全应用层访问数据库的输出端口边界。 | 应用服务只依赖端口，禁止暴露 Mapper。 |
+| `.../security/application/port/out/TenantRepository.java` | 提供 ACTIVE、未删除租户的 slug 查询端口。 | 登录前租户解析调用。 |
+| `.../security/application/port/out/UserRepository.java` | 提供显式 tenantId + loginName 的未删除用户查询端口。 | 登录前调用，不依赖尚未建立的 TenantContext。 |
+| `.../security/application/port/out/RoleRepository.java` | 提供显式租户和用户的当前有效角色查询端口。 | 登录和鉴权阶段聚合角色与 permissions。 |
+| `.../security/application/port/out/RefreshTokenStore.java` | 提供全局唯一 token_hash 普通查询和事务内 `FOR UPDATE` 查询端口。 | 调用方必须在锁定事务中校验返回记录的 tenantId/userId。 |
+| `.../security/application/port/out/UserRoleStore.java` | 提供用户角色绑定写入端口。 | 管理员初始化和授权应用服务通过该端口写入，禁止直接调用 Mapper。 |
+| `.../security/infrastructure/persistence/package-info.java` | 声明安全模块 MyBatis-Plus 持久化适配边界。 | 基础设施实现只向应用层暴露端口。 |
+| `.../persistence/entity/TenantPo.java`、`UserPo.java`、`RolePo.java`、`UserRolePo.java`、`RefreshTokenPo.java` | 映射五张认证主链表的 UUID、枚举、timestamptz、jsonb、inet 和 version 字段；主键使用应用输入模式。 | 仅供 Mapper 和转换器使用，禁止直接返回 Controller。 |
+| `.../persistence/typehandler/JsonNodeJsonbTypeHandler.java` | 使用 Jackson 和 PostgreSQL `PGobject` 映射通用 JSONB。 | 租户 settings 等 JSON 对象字段复用。 |
+| `.../persistence/typehandler/PermissionSetJsonbTypeHandler.java` | 校验 JSONB 字符串数组并映射不可变 `Set<String>`。 | 禁止手工拼接 permissions JSON。 |
+| `.../persistence/typehandler/PostgresInetTypeHandler.java` | 在 PostgreSQL inet 与 Java `InetAddress` 间转换。 | Refresh Token 签发来源 IP 持久化复用。 |
+| `.../persistence/typehandler/PostgresUuidTypeHandler.java` | 为 MyBatis-Plus 自动 ResultMap 显式映射 PostgreSQL UUID。 | 所有应用预生成 UUID 的持久化对象复用。 |
+| `.../persistence/converter/IdentityPersistenceConverter.java` | 将五类持久化对象转换为领域模型，并把损坏数据转换为稳定内部错误。 | 写入端口增加时在同一边界补充反向转换。 |
+| `.../persistence/mapper/TenantMapper.java` | 查询 ACTIVE、未删除租户，并整体忽略 tenant-line 插件。 | `tenants` 没有 tenant_id，禁止被租户插件改写。 |
+| `.../persistence/mapper/UserMapper.java` | 用显式 tenant_id + login_name 查询未删除用户。 | 认证前查询方法绕过 tenant-line，但 SQL 自身保持租户条件。 |
+| `.../persistence/mapper/RoleMapper.java` | 显式联结 users、user_roles、roles 并过滤禁用、删除和过期授权。 | 自定义 SQL 必须继续对每个租户表保留 tenant_id 条件。 |
+| `.../persistence/mapper/UserRoleMapper.java` | 提供用户角色绑定的 MyBatis-Plus 基础映射。 | 后续初始化/授权写服务通过应用端口使用，不跨层暴露。 |
+| `.../persistence/mapper/RefreshTokenMapper.java` | 按全局唯一 token_hash 查询，并提供 `FOR UPDATE` 锁查询。 | 这是认证前无 tenant 上下文的受控例外，返回后仍校验所有权。 |
+| `.../persistence/repository/MyBatisTenantRepository.java`、`MyBatisUserRepository.java`、`MyBatisRoleRepository.java`、`MyBatisRefreshTokenStore.java` | 将查询输出端口适配到 Mapper，并返回领域模型；实现类保持可被 Spring 类代理。 | Controller 和跨模块调用方不得绕过这些端口。 |
+| `.../persistence/repository/MyBatisUserRoleStore.java` | 将用户角色写入端口适配到 UserRoleMapper。 | 后续初始化和授权应用服务只依赖 UserRoleStore。 |
+| `.../persistence/config/SecurityPersistenceConfiguration.java` | 只扫描安全持久化 Mapper，并注册 MyBatis-Plus 乐观锁插件。 | 后续租户上下文阶段在同一拦截器链加入 tenant-line。 |
+| `.../persistence/converter/IdentityPersistenceConverterTest.java` | 验证五类转换、不可变 permissions、时间和敏感字段字符串输出。 | 领域或表字段变化时同步维护。 |
+| `.../persistence/typehandler/PersistenceTypeHandlerTest.java` | 验证 JSONB permissions 校验和 inet IPv4/IPv6 映射。 | TypeHandler 变化时保持非法输入覆盖。 |
+| `.../persistence/mapper/SecurityMapperSqlContractTest.java` | 固定认证前 SQL 的租户条件、Tenant 根表例外及 Refresh Token 锁语义。 | 新增自定义安全 SQL 时加入显式租户审查断言。 |
 
 ## 5. `knowagent-model`
 
@@ -158,20 +189,21 @@
 | 文件 | 当前作用 | 后续使用方式 |
 |---|---|---|
 | `knowagent-api/pom.xml` | 聚合全部业务模块并引入 Spring MVC、Security、数据库、Redis、Flyway；`docker-it` Profile 使用 Failsafe 运行 Testcontainers。 | Controller、SseEmitter、请求 DTO、认证过滤器和基础设施 Bean 在此装配；数据库迁移集成测试用 `mvn -Pdocker-it verify` 执行。 |
-| `.../api/KnowAgentApiApplication.java` | HTTP API 进程的 Spring Boot 启动入口。 | 保持薄启动类，只做组件扫描与应用启动。 |
+| `.../api/KnowAgentApiApplication.java` | HTTP API 进程的 Spring Boot 启动入口；Mapper 扫描由各业务模块配置负责。 | 保持薄启动类，避免全根包扫描把应用端口误注册为 Mapper。 |
 | `.../api/config/SecurityBootstrapConfiguration.java` | 基于 Servlet `SecurityFilterChain` 的开发期安全占位配置，放行健康检查和系统信息接口。 | 替换为 JWT、RBAC、租户上下文和统一未认证响应。 |
 | `.../api/system/SystemInfoController.java` | 提供 `/api/v1/system/info`，用于验证 API 已启动。 | 可增加公开版本信息，不能暴露密钥和内部配置。 |
 | `.../resources/application.yml` | API 端口、数据源、Redis、Flyway、Actuator 和日志配置。 | 通过环境变量覆盖，不在文件中写生产密码。 |
 | `.../resources/db/migration/V1__baseline.sql` | 已发布的 Flyway 空基线，用于固定迁移起点。 | 保持内容不变，禁止修改已执行迁移的校验和。 |
 | `.../resources/db/migration/V2__identity_core.sql` 至 `V11__mcp.sql` | 按身份、权限、凭据、模型、知识库、聊天、运行时、异步任务、Skills 和 MCP 创建 31 张 MVP 表。 | 只允许新增更高版本迁移；字段、约束和锁语义以 `docs/database-schema.md` 为准。 |
 | `.../api/database/FlywaySchemaIT.java` | 在 PostgreSQL 16 Testcontainer 中验证迁移、租户约束、Token 家族、Run 并发、Outbox 抢占和事务回滚。 | Docker 可用时通过 `docker-it` Profile 运行；默认构建不启动容器。 |
+| `.../api/database/SecurityPersistenceIT.java` | 使用 PostgreSQL 16 和真实 Mapper 验证认证表映射、有效角色、跨租户隔离、乐观锁、Refresh Token 行锁，并启动真实 Spring Boot 上下文验证生产装配。 | Docker 可用时通过 `docker-it` Profile 运行；失败或跳过时不得勾选测试计划。 |
 
 ## 12. `knowagent-worker`
 
 | 文件 | 当前作用 | 后续使用方式 |
 |---|---|---|
 | `knowagent-worker/pom.xml` | 聚合后台处理所需模块和 Redis、数据库运行依赖。 | 加入 Stream 消费者、解析、索引和 Run 执行实现。 |
-| `.../worker/KnowAgentWorkerApplication.java` | 非 Web Worker 的 Spring Boot 启动入口。 | 启动消费者组、任务处理器和恢复扫描器。 |
+| `.../worker/KnowAgentWorkerApplication.java` | 非 Web Worker 的 Spring Boot 启动入口；Mapper 扫描由各业务模块配置负责。 | 启动消费者组、任务处理器和恢复扫描器，避免全根包误扫描端口接口。 |
 | `.../worker/resources/application.yml` | Worker 数据源、Redis、进程类型和日志配置。 | 增加并发数、消费者名、重试和模型超时配置。 |
 
 ## 13. `web`

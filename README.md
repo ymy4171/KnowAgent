@@ -55,7 +55,7 @@ docker compose up -d postgres
 
 ## 当前阶段
 
-项目目前已经完成多模块工程、核心领域端口、API/Worker 启动入口、Flyway 基线和 Docker Compose 基础设施。后续优先实现：
+项目目前已经完成多模块工程、核心领域端口、API/Worker 启动入口、Flyway V1-V11 共 31 张业务表和 Docker Compose 基础设施。后续优先实现：
 
 1. 用户、角色、租户和 JWT 鉴权
 2. 知识库 CRUD 与文件上传
@@ -66,6 +66,7 @@ docker compose up -d postgres
 ## 设计文档
 
 - [项目计划](./PLAN.md)
+- [认证阶段开发提示词](./DEVELOPMENT_PROMPTS.md)
 - [Yuxi Java 重构指南](./YUXI_REFACTOR_GUIDE.md)
 - [系统架构说明](./docs/architecture.md)
 - [可执行测试计划](./TEST_PLAN.md)
