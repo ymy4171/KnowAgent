@@ -39,9 +39,10 @@ mvn -ntp clean verify
 - [ ] 锁查询、统计查询和批量更新 SQL 显式包含 tenant_id（即使租户插件能够改写普通自定义 SQL，也不能仅依赖自动改写）。
 - [ ] API Key、模型密钥和外部凭据不以明文存储或输出到日志。
 - [x] 开发者管理员初始化幂等创建租户、`ADMIN` 系统角色、管理员用户与 `user_roles` 绑定；密码只以 Argon2id 哈希落库，日志与异常不含明文；任一步失败整体回滚。
-- [x] 初始化存在性查询复用认证前显式租户查询，绕过 tenant-line 的方法白名单保持精确锁定。
+- [x] 初始化查询与用户角色绑定 UPSERT 显式携带 tenant_id，绕过 tenant-line 的方法白名单保持精确锁定；过期绑定原地恢复且不违反唯一约束。
+- [x] Access Token 由 Spring Security 官方 JOSE 组件签发与解析（不手写 JWT 编解码器）：密钥只从环境变量读取；校验签名、issuer、audience、过期时间与必需声明（sub/tenant_id/roles/permissions/jti）；合法 token 转换为 TenantPrincipal 并建立/清理 TenantContext；缺失、篡改、过期、错误 issuer/audience、缺 tenant_id、roles 缺失的 token 一律返回稳定 JSON 401；角色/权限正确映射为 GrantedAuthority；响应、日志与异常不出现 token 明文。密钥、issuer、audience、有效期通过类型安全的 `@ConfigurationProperties` 注入。
 
-验收：使用 Testcontainers PostgreSQL 初始化两个租户，完成跨租户 ID 枚举和权限矩阵测试。管理员初始化在 PostgreSQL 16 容器中验证首次执行、幂等、哈希与事务回滚（`mvn -Pdocker-it verify`）。
+验收：使用 Testcontainers PostgreSQL 初始化两个租户，完成跨租户 ID 枚举和权限矩阵测试。管理员初始化在 PostgreSQL 16 容器中验证首次执行、幂等、哈希、事务回滚，以及过期 `user_roles` 绑定原地恢复并重新获得 ADMIN 权限（`mvn -Pdocker-it verify`）。Access Token 基础设施在 PostgreSQL 16 容器中通过真实 HTTP 安全链验证：有效 token 访问受保护端点、角色/权限映射、TenantContext 建立与清理，以及匿名访问、篡改、过期、错误 issuer/audience、缺 tenant_id、roles 缺失、畸形 tenant_id 共 7 类无效请求稳定返回 JSON 401 且不泄露 token（`mvn -Pdocker-it verify`，见 `AccessTokenSecurityIT`）。
 
 ## 3. 数据库、事务与 Outbox
 

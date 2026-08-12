@@ -26,9 +26,10 @@ import java.util.UUID;
  *
  * <p>Runs entirely inside one transaction: {@link #initialize} is
  * {@link Transactional} and any step failure rolls back every insert made in that
- * call. Each of the four rows is created only when it does not already exist
- * (looked up by a natural key: slug / tenant+code / tenant+login / tenant+user+role),
- * so repeated startups never produce duplicates.
+ * call. Tenant, role and user creation uses their natural keys; the user-role binding
+ * is ensured with one atomic upsert that reactivates an expired assignment without
+ * violating its tenant/user/role unique constraint. Repeated startups never produce
+ * duplicates.
  *
  * <p>When an existing tenant, role or user is found, its state is validated against
  * the bootstrap expectations: the tenant must be {@code ACTIVE} (a SUSPENDED or
@@ -130,16 +131,14 @@ public class AdminBootstrapService implements AdminBootstrap {
                     return created;
                 });
 
-        if (!repository.existsUserRole(tenant.id(), adminUser.id(), adminRole.id())) {
-            repository.insertUserRole(new UserRole(
-                    UUID.randomUUID(),
-                    tenant.id(),
-                    adminUser.id(),
-                    adminRole.id(),
-                    adminUser.id(),
-                    now,
-                    null));
-        }
+        repository.ensureUserRole(new UserRole(
+                UUID.randomUUID(),
+                tenant.id(),
+                adminUser.id(),
+                adminRole.id(),
+                adminUser.id(),
+                now,
+                null));
     }
 
     private static ObjectNode emptySettings() {

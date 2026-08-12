@@ -43,6 +43,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import javax.sql.DataSource;
+import java.nio.charset.StandardCharsets;
 import java.net.InetAddress;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -50,6 +51,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Base64;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -62,6 +64,10 @@ class SecurityPersistenceIT {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final OffsetDateTime ISSUED_AT = OffsetDateTime.of(
             2026, 8, 11, 8, 0, 0, 0, ZoneOffset.ofHours(8));
+
+    /** Test-only HS256 key; the mandatory JWT beans require it at context boot. */
+    private static final String JWT_SECRET = Base64.getEncoder().encodeToString(
+            "integration-test-only-key-0123456789abcdefghij".getBytes(StandardCharsets.UTF_8));
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine")
@@ -286,6 +292,9 @@ class SecurityPersistenceIT {
                         "--spring.data.redis.url=redis://127.0.0.1:1",
                         "--server.port=0",
                         "--management.server.port=0",
+                        "--jwt.issuer=https://knowagent.test",
+                        "--jwt.audience=knowagent-api",
+                        "--jwt.secret=" + JWT_SECRET,
                         "--spring.main.banner-mode=off",
                         "--logging.level.root=WARN",
                         "--logging.level.org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration=ERROR")) {

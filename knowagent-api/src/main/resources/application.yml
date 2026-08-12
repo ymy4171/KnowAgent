@@ -27,6 +27,16 @@ management:
       probes:
         enabled: true
 
+# Access-token (JWT) configuration. issuer/audience/secret are mandatory and
+# come only from the environment - application.yml carries no real key. The
+# secret must be base64-encoded and decode to at least 32 bytes (HS256). The
+# API fails fast at startup until JWT_SECRET, JWT_ISSUER and JWT_AUDIENCE are set.
+jwt:
+  issuer: ${JWT_ISSUER:}
+  audience: ${JWT_AUDIENCE:}
+  secret: ${JWT_SECRET:}
+  access-token-ttl: ${JWT_ACCESS_TOKEN_TTL:15m}
+
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true

@@ -41,7 +41,9 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
+import java.util.Base64;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -67,6 +69,10 @@ class TenantIsolationIT {
             .withPassword("integration_only");
 
     private static SqlSessionFactory sessionFactory;
+
+    /** Test-only HS256 key; the mandatory JWT beans require it at context boot. */
+    private static final String JWT_SECRET = Base64.getEncoder().encodeToString(
+            "integration-test-only-key-0123456789abcdefghij".getBytes(StandardCharsets.UTF_8));
 
     @BeforeAll
     static void setUpDatabase() {
@@ -258,6 +264,9 @@ class TenantIsolationIT {
                         "--spring.data.redis.url=redis://127.0.0.1:1",
                         "--server.port=0",
                         "--management.server.port=0",
+                        "--jwt.issuer=https://knowagent.test",
+                        "--jwt.audience=knowagent-api",
+                        "--jwt.secret=" + JWT_SECRET,
                         "--spring.main.banner-mode=off",
                         "--logging.level.root=WARN",
                         "--logging.level.org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration=ERROR")) {

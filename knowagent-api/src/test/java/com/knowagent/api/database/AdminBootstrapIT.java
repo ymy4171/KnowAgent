@@ -4,6 +4,7 @@ import com.knowagent.api.KnowAgentApiApplication;
 import com.knowagent.common.tenant.TenantId;
 import com.knowagent.security.application.port.out.AdminBootstrapRepository;
 import com.knowagent.security.application.port.out.PasswordHasher;
+import com.knowagent.security.application.port.out.RoleRepository;
 import com.knowagent.security.application.service.AdminBootstrap;
 import com.knowagent.security.application.service.AdminBootstrapRequest;
 import com.knowagent.security.domain.role.Role;
@@ -25,10 +26,12 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import javax.sql.DataSource;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Base64;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -42,8 +45,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * <p>Runs only under the {@code docker-it} profile (Failsafe). It verifies the four
  * acceptance criteria from the task: first execution creates the full tenant / ADMIN
  * role / admin user / binding, a second execution creates no duplicates, the password
- * is persisted only as an Argon2id hash (never the raw value), and a failing step
- * rolls the whole transaction back.
+ * is persisted only as an Argon2id hash (never the raw value), a failing step rolls
+ * the whole transaction back, and an expired binding is reactivated without violating
+ * the tenant/user/role unique constraint.
  *
  * <p>The bootstrap is triggered by calling {@link AdminBootstrap#initialize} on the
  * real service bean after the context boots with {@code bootstrap.enabled=false}
@@ -54,6 +58,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class AdminBootstrapIT {
 
     private static final String RAW_PASSWORD = "CorrectHorseBatteryStaple1";
+
+    /** Test-only HS256 key; the mandatory JWT beans require it at context boot. */
+    private static final String JWT_SECRET = Base64.getEncoder().encodeToString(
+            "integration-test-only-key-0123456789abcdefghij".getBytes(StandardCharsets.UTF_8));
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine")
@@ -119,6 +127,50 @@ class AdminBootstrapIT {
         }
     }
 
+    @Test
+    void expiredAdminBindingIsReactivatedWithoutViolatingTheUniqueConstraint() {
+        try (ConfigurableApplicationContext context = context()) {
+            AdminBootstrap bootstrap = context.getBean(AdminBootstrap.class);
+            RoleRepository roles = context.getBean(RoleRepository.class);
+            AdminBootstrapRequest request = new AdminBootstrapRequest(
+                    "expired-binding-acme", null, "admin@expired-binding.test", null, RAW_PASSWORD);
+
+            bootstrap.initialize(request);
+            UUID tenantId = singleUuid("SELECT id FROM tenants WHERE slug = ?", request.tenantSlug());
+            UUID userId = singleUuid(
+                    "SELECT id FROM users WHERE tenant_id = ? AND login_name = ?",
+                    tenantId, request.adminLogin());
+            UUID roleId = singleUuid(
+                    "SELECT id FROM roles WHERE tenant_id = ? AND code = ?", tenantId, "ADMIN");
+            UUID bindingId = singleUuid(
+                    "SELECT id FROM user_roles WHERE tenant_id = ? AND user_id = ? AND role_id = ?",
+                    tenantId, userId, roleId);
+
+            update("""
+                    UPDATE user_roles
+                    SET granted_at = CURRENT_TIMESTAMP - INTERVAL '2 minutes',
+                        expires_at = CURRENT_TIMESTAMP - INTERVAL '1 minute'
+                    WHERE tenant_id = ? AND user_id = ? AND role_id = ?
+                    """, tenantId, userId, roleId);
+
+            bootstrap.initialize(request);
+
+            assertThat(count(
+                    "SELECT count(*) FROM user_roles WHERE tenant_id = ? AND user_id = ? AND role_id = ?",
+                    tenantId, userId, roleId)).isEqualTo(1);
+            assertThat(singleUuid(
+                    "SELECT id FROM user_roles WHERE tenant_id = ? AND user_id = ? AND role_id = ?",
+                    tenantId, userId, roleId)).isEqualTo(bindingId);
+            assertThat(count("""
+                    SELECT count(*) FROM user_roles
+                    WHERE tenant_id = ? AND user_id = ? AND role_id = ? AND expires_at IS NULL
+                    """, tenantId, userId, roleId)).isEqualTo(1);
+            assertThat(roles.findEffectiveByUser(TenantId.of(tenantId), userId))
+                    .extracting(Role::code)
+                    .contains("ADMIN");
+        }
+    }
+
     private void assertBootstrapDataOnce(AdminBootstrapRequest request, PasswordHasher hasher) {
         UUID tenantId = singleUuid("SELECT id FROM tenants WHERE slug = ?", request.tenantSlug());
         UUID userId = singleUuid(
@@ -159,6 +211,9 @@ class AdminBootstrapIT {
                         "--server.port=0",
                         "--management.server.port=0",
                         "--bootstrap.enabled=false",
+                        "--jwt.issuer=https://knowagent.test",
+                        "--jwt.audience=knowagent-api",
+                        "--jwt.secret=" + JWT_SECRET,
                         "--spring.main.banner-mode=off",
                         "--logging.level.root=WARN",
                         "--logging.level.org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration=ERROR");
@@ -211,11 +266,6 @@ class AdminBootstrapIT {
         }
 
         @Override
-        public boolean existsUserRole(TenantId tenantId, UUID userId, UUID roleId) {
-            return delegate.existsUserRole(tenantId, userId, roleId);
-        }
-
-        @Override
         public void insertTenant(Tenant tenant) {
             delegate.insertTenant(tenant);
         }
@@ -231,8 +281,8 @@ class AdminBootstrapIT {
         }
 
         @Override
-        public void insertUserRole(UserRole userRole) {
-            delegate.insertUserRole(userRole);
+        public void ensureUserRole(UserRole userRole) {
+            delegate.ensureUserRole(userRole);
         }
     }
 
@@ -242,6 +292,15 @@ class AdminBootstrapIT {
              ResultSet resultSet = statement.executeQuery()) {
             assertThat(resultSet.next()).isTrue();
             return resultSet.getLong(1);
+        } catch (SQLException exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
+    private void update(String sql, Object... parameters) {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = prepare(connection, sql, parameters)) {
+            assertThat(statement.executeUpdate()).isEqualTo(1);
         } catch (SQLException exception) {
             throw new IllegalStateException(exception);
         }

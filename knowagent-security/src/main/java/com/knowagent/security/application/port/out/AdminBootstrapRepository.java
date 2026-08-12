@@ -7,7 +7,6 @@ import com.knowagent.security.domain.tenant.Tenant;
 import com.knowagent.security.domain.user.User;
 
 import java.util.Optional;
-import java.util.UUID;
 
 /**
  * Persistence boundary for the developer-admin bootstrap flow.
@@ -29,14 +28,16 @@ public interface AdminBootstrapRepository {
     /** Finds a non-deleted user by login name inside one tenant, regardless of status. */
     Optional<User> findUserByTenantAndLogin(TenantId tenantId, String loginName);
 
-    /** Returns {@code true} when the user-to-role assignment already exists. */
-    boolean existsUserRole(TenantId tenantId, UUID userId, UUID roleId);
-
     void insertTenant(Tenant tenant);
 
     void insertRole(Role role);
 
     void insertUser(User user);
 
-    void insertUserRole(UserRole userRole);
+    /**
+     * Ensures one effective assignment exists for the tenant/user/role natural key.
+     * Implementations must insert a missing row, reactivate an expired row, and leave
+     * an already-effective row unchanged as one atomic operation.
+     */
+    void ensureUserRole(UserRole userRole);
 }

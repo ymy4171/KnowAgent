@@ -17,7 +17,6 @@ import org.springframework.stereotype.Repository;
 
 import java.util.Objects;
 import java.util.Optional;
-import java.util.UUID;
 
 /**
  * MyBatis-Plus adapter for the bootstrap persistence boundary.
@@ -71,14 +70,6 @@ public class MyBatisAdminBootstrapRepository implements AdminBootstrapRepository
     }
 
     @Override
-    public boolean existsUserRole(TenantId tenantId, UUID userId, UUID roleId) {
-        Objects.requireNonNull(tenantId, "tenantId must not be null");
-        Objects.requireNonNull(userId, "userId must not be null");
-        Objects.requireNonNull(roleId, "roleId must not be null");
-        return userRoles.existsByTenantUserAndRole(tenantId.value(), userId, roleId) > 0;
-    }
-
-    @Override
     public void insertTenant(Tenant tenant) {
         Objects.requireNonNull(tenant, "tenant must not be null");
         int inserted = tenants.insert(IdentityPersistenceConverter.toPersistence(tenant));
@@ -106,11 +97,19 @@ public class MyBatisAdminBootstrapRepository implements AdminBootstrapRepository
     }
 
     @Override
-    public void insertUserRole(UserRole userRole) {
+    public void ensureUserRole(UserRole userRole) {
         Objects.requireNonNull(userRole, "userRole must not be null");
-        int inserted = userRoles.insert(IdentityPersistenceConverter.toPersistence(userRole));
-        if (inserted != 1) {
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "Unable to persist bootstrap user role assignment");
+        if (userRole.expiresAt() != null) {
+            throw new IllegalArgumentException("bootstrap user role assignment must not expire");
+        }
+        var record = IdentityPersistenceConverter.toPersistence(userRole);
+        int affected = userRoles.ensureEffectiveAssignment(
+                record.getId(), record.getTenantId(), record.getUserId(), record.getRoleId(),
+                record.getGrantedBy(), record.getGrantedAt());
+        // PostgreSQL reports 1 for insert/reactivation and 0 when the existing row is
+        // already effective and the ON CONFLICT WHERE condition deliberately skips it.
+        if (affected < 0 || affected > 1) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "Unable to ensure bootstrap user role assignment");
         }
     }
 }

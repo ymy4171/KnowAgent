@@ -1,6 +1,7 @@
 package com.knowagent.security.infrastructure.persistence.mapper;
 
 import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
+import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Select;
 import org.junit.jupiter.api.Test;
 
@@ -77,14 +78,20 @@ class SecurityMapperSqlContractTest {
     }
 
     @Test
-    void bootstrapAssignmentExistenceIsScopedToTenantUserAndRole() throws Exception {
+    void bootstrapAssignmentUpsertIsTenantScopedAndReactivatesOnlyExpiredRows() throws Exception {
         Method method = UserRoleMapper.class.getMethod(
-                "existsByTenantUserAndRole", java.util.UUID.class, java.util.UUID.class, java.util.UUID.class);
-        String sql = sql(method);
+                "ensureEffectiveAssignment",
+                java.util.UUID.class, java.util.UUID.class, java.util.UUID.class,
+                java.util.UUID.class, java.util.UUID.class, java.time.OffsetDateTime.class);
+        String sql = insertSql(method);
 
         assertThat(sql).contains(
-                "tenant_id = #{tenantid}", "user_id = #{userid}", "role_id = #{roleid}",
-                "expires_at is null or expires_at > current_timestamp");
+                "insert into user_roles",
+                "#{tenantid}", "#{userid}", "#{roleid}",
+                "on conflict on constraint uq_user_roles_assignment",
+                "do update set",
+                "expires_at = null",
+                "user_roles.expires_at <= current_timestamp");
         assertThat(method.getAnnotation(InterceptorIgnore.class).tenantLine()).isEqualTo("1");
     }
 
@@ -117,11 +124,19 @@ class SecurityMapperSqlContractTest {
                 "TenantMapper.selectActiveBySlug",
                 "TenantMapper.selectBySlug",
                 "UserMapper.selectByTenantAndLoginName",
-                "UserRoleMapper.existsByTenantUserAndRole");
+                "UserRoleMapper.ensureEffectiveAssignment");
     }
 
     private static String sql(Method method) {
         return String.join(" ", Arrays.stream(method.getAnnotation(Select.class).value())
+                        .map(String::strip)
+                        .toList())
+                .replaceAll("\\s+", " ")
+                .toLowerCase();
+    }
+
+    private static String insertSql(Method method) {
+        return String.join(" ", Arrays.stream(method.getAnnotation(Insert.class).value())
                         .map(String::strip)
                         .toList())
                 .replaceAll("\\s+", " ")

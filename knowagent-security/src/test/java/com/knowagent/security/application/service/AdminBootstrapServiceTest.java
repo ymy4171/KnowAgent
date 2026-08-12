@@ -142,7 +142,7 @@ class AdminBootstrapServiceTest {
     }
 
     @Test
-    void expiredUserRoleBindingIsTreatedAsAbsentAndRecreated() {
+    void expiredUserRoleBindingIsReactivatedWithoutCreatingADuplicate() {
         InMemoryAdminBootstrapRepository repository = new InMemoryAdminBootstrapRepository();
         AdminBootstrapService service = new AdminBootstrapService(repository, new PrefixPasswordHasher());
 
@@ -164,12 +164,14 @@ class AdminBootstrapServiceTest {
         repository.bindings.clear();
         repository.bindings.add(trulyExpired);
 
-        // Second run must see the binding as absent and insert a fresh one.
+        // Second run must reactivate the existing natural-key row. PostgreSQL has a
+        // unique constraint on tenant/user/role, so creating a second row is invalid.
         service.initialize(new AdminBootstrapRequest("acme", null, "admin@acme.test", null, RAW_PASSWORD));
-        assertThat(repository.bindings).hasSize(2);
-        // The first binding is the old expired one, the second is the fresh null-expiry binding.
-        assertThat(repository.bindings.get(0).expiresAt()).isNotNull();
-        assertThat(repository.bindings.get(1).expiresAt()).isNull();
+        assertThat(repository.bindings).singleElement().satisfies(binding -> {
+            assertThat(binding.id()).isEqualTo(expiredBinding.id());
+            assertThat(binding.expiresAt()).isNull();
+            assertThat(binding.isEffectiveAt(Instant.now())).isTrue();
+        });
     }
 
     @Test
@@ -324,15 +326,6 @@ class AdminBootstrapServiceTest {
         }
 
         @Override
-        public boolean existsUserRole(TenantId tenantId, UUID userId, UUID roleId) {
-            Instant now = Instant.now();
-            return bindings.stream().anyMatch(binding -> binding.tenantId().equals(tenantId)
-                    && binding.userId().equals(userId)
-                    && binding.roleId().equals(roleId)
-                    && (binding.expiresAt() == null || binding.expiresAt().isAfter(now)));
-        }
-
-        @Override
         public void insertTenant(Tenant tenant) {
             tenants.add(tenant);
         }
@@ -348,7 +341,22 @@ class AdminBootstrapServiceTest {
         }
 
         @Override
-        public void insertUserRole(UserRole userRole) {
+        public void ensureUserRole(UserRole userRole) {
+            for (int index = 0; index < bindings.size(); index++) {
+                UserRole existing = bindings.get(index);
+                boolean sameAssignment = existing.tenantId().equals(userRole.tenantId())
+                        && existing.userId().equals(userRole.userId())
+                        && existing.roleId().equals(userRole.roleId());
+                if (!sameAssignment) {
+                    continue;
+                }
+                if (!existing.isEffectiveAt(Instant.now())) {
+                    bindings.set(index, new UserRole(
+                            existing.id(), existing.tenantId(), existing.userId(), existing.roleId(),
+                            userRole.grantedBy(), userRole.grantedAt(), null));
+                }
+                return;
+            }
             bindings.add(userRole);
         }
 

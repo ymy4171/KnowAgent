@@ -67,6 +67,20 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
+        <!-- Access-token infrastructure is implemented with Spring Security's own
+             OAuth2 Resource Server and JOSE (JWT) support - never a hand-written
+             JWT codec. These are Servlet/web concerns, so they stay in the web
+             module (knowagent-api) and never enter knowagent-security, which
+             documents that web concerns are excluded there. Versions are managed
+             by the Spring Boot BOM. -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-oauth2-resource-server</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-oauth2-jose</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>

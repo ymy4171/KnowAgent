@@ -70,10 +70,10 @@
 | `.../security/application/port/out/RefreshTokenStore.java` | 提供全局唯一 token_hash 普通查询和事务内 `FOR UPDATE` 查询端口。 | 调用方必须在锁定事务中校验返回记录的 tenantId/userId。 |
 | `.../security/application/port/out/UserRoleStore.java` | 提供用户角色绑定写入端口。 | 管理员初始化和授权应用服务通过该端口写入，禁止直接调用 Mapper。 |
 | `.../security/application/port/out/PasswordHasher.java` | 密码散列输出端口：`encode` 与 `matches`。 | 只接受原始密码并返回散列，禁止把明文传入持久化层。 |
-| `.../security/application/port/out/AdminBootstrapRepository.java` | 开发管理员初始化的持久化边界：租户/角色/用户幂等查询与四类写入。 | 仅被 AdminBootstrapService 使用，认证前查询走显式 tenant_id。 |
+| `.../security/application/port/out/AdminBootstrapRepository.java` | 开发管理员初始化的持久化边界：租户/角色/用户幂等查询，以及用户角色绑定的原子确保操作。 | 仅被 AdminBootstrapService 使用；认证前查询和绑定 UPSERT 均显式携带 tenant_id。 |
 | `.../security/application/service/AdminBootstrap.java` | 开发管理员初始化入端口：`initialize(AdminBootstrapRequest)`。 | 启动 Runner 调用，不暴露任何 HTTP 端点。 |
 | `.../security/application/service/AdminBootstrapRequest.java` | 校验并规范化初始化参数：slug/login 小写、缺省名回退、密码至少 12 字符、拒绝空值。 | 参数来自环境变量，校验失败即拒绝启动，不自动生成密码。 |
-| `.../security/application/service/AdminBootstrapService.java` | 幂等创建租户、`ADMIN` 系统角色、管理员用户和 `user_roles` 绑定，整体 `@Transactional`；密码经 PasswordHasher（Argon2id）编码后落库，UUID 全部在 Java 预生成。 | 重复启动不产生重复数据，任一步失败全部回滚。 |
+| `.../security/application/service/AdminBootstrapService.java` | 幂等创建租户、`ADMIN` 系统角色、管理员用户和 `user_roles` 绑定，整体 `@Transactional`；密码经 PasswordHasher（Argon2id）编码后落库，UUID 全部在 Java 预生成。 | 绑定通过原子 UPSERT 创建或恢复过期记录；重复启动不产生重复数据，任一步失败全部回滚。 |
 | `.../security/infrastructure/persistence/package-info.java` | 声明安全模块 MyBatis-Plus 持久化适配边界。 | 基础设施实现只向应用层暴露端口。 |
 | `.../persistence/entity/TenantPo.java`、`UserPo.java`、`RolePo.java`、`UserRolePo.java`、`RefreshTokenPo.java` | 映射五张认证主链表的 UUID、枚举、timestamptz、jsonb、inet 和 version 字段；主键使用应用输入模式。 | 仅供 Mapper 和转换器使用，禁止直接返回 Controller。 |
 | `.../persistence/typehandler/JsonNodeJsonbTypeHandler.java` | 使用 Jackson 和 PostgreSQL `PGobject` 映射通用 JSONB。 | 租户 settings 等 JSON 对象字段复用。 |
@@ -84,11 +84,11 @@
 | `.../persistence/mapper/TenantMapper.java` | 查询 ACTIVE、未删除租户，并整体忽略 tenant-line 插件；`selectBySlug` 供初始化幂等查询。 | `tenants` 没有 tenant_id，禁止被租户插件改写。 |
 | `.../persistence/mapper/UserMapper.java` | 用显式 tenant_id + login_name 查询未删除用户。 | 认证前查询方法绕过 tenant-line，但 SQL 自身保持租户条件。 |
 | `.../persistence/mapper/RoleMapper.java` | 显式联结 users、user_roles、roles 并过滤禁用、删除和过期授权；`selectByTenantAndCode` 供初始化幂等查询。 | 自定义 SQL 必须继续对每个租户表保留 tenant_id 条件。 |
-| `.../persistence/mapper/UserRoleMapper.java` | 提供用户角色绑定的 MyBatis-Plus 基础映射，及 `existsByTenantUserAndRole` 幂等存在性检查。 | 后续初始化/授权写服务通过应用端口使用，不跨层暴露。 |
+| `.../persistence/mapper/UserRoleMapper.java` | 提供用户角色绑定的 MyBatis-Plus 基础映射，以及 `ensureEffectiveAssignment` 原子 UPSERT：缺失时插入、过期时恢复、有效时保持不变。 | SQL 显式携带 tenant_id，并依赖 `uq_user_roles_assignment` 防止重复绑定；后续服务通过应用端口使用。 |
 | `.../persistence/mapper/RefreshTokenMapper.java` | 按全局唯一 token_hash 查询，并提供 `FOR UPDATE` 锁查询。 | 这是认证前无 tenant 上下文的受控例外，返回后仍校验所有权。 |
 | `.../persistence/repository/MyBatisTenantRepository.java`、`MyBatisUserRepository.java`、`MyBatisRoleRepository.java`、`MyBatisRefreshTokenStore.java` | 将查询输出端口适配到 Mapper，并返回领域模型；实现类保持可被 Spring 类代理。 | Controller 和跨模块调用方不得绕过这些端口。 |
 | `.../persistence/repository/MyBatisUserRoleStore.java` | 将用户角色写入端口适配到 UserRoleMapper。 | 后续初始化和授权应用服务只依赖 UserRoleStore。 |
-| `.../persistence/repository/MyBatisAdminBootstrapRepository.java` | 将初始化持久化端口适配到四个 Mapper；写入失败抛稳定内部错误，读取全部带显式 tenant_id。 | 仅供 AdminBootstrapService 使用，认证前不依赖 TenantContext。 |
+| `.../persistence/repository/MyBatisAdminBootstrapRepository.java` | 将初始化持久化端口适配到四个 Mapper；用户角色绑定调用原子 UPSERT，其他写入失败抛稳定内部错误。 | 仅供 AdminBootstrapService 使用，认证前不依赖 TenantContext，租户范围由显式 tenant_id 保证。 |
 | `.../infrastructure/crypto/SpringSecurityArgon2PasswordHasher.java` | 用 Spring Security 的 Argon2PasswordEncoder（Argon2id）实现 PasswordHasher 端口。 | 生产与初始化共用，成本参数用框架默认值。 |
 | `.../persistence/config/SecurityPersistenceConfiguration.java` | 只扫描安全持久化 Mapper，并在拦截器链中先装配 TenantLineInnerInterceptor、再装配乐观锁插件。 | 新增内层拦截器时保持 tenant-line 在最前。 |
 | `.../persistence/config/TenantContextTenantLineHandler.java` | 租户拦截器 handler：从 TenantContext.requireTenantId() 取值（fail closed），显式忽略无 tenant_id 的 tenants 与 flyway_schema_history 表。 | 新增无 tenant_id 的基础设施表时在此补充忽略项。 |
@@ -97,7 +97,7 @@
 | `.../persistence/mapper/SecurityMapperSqlContractTest.java` | 固定认证前 SQL 的租户条件、Tenant 根表例外及 Refresh Token 锁语义，并精确锁定允许绕过 tenant-line 的 Mapper 方法白名单（含初始化的三个存在性查询）。 | 新增自定义安全 SQL 时加入显式租户审查断言；任何新增绕过方法都会使白名单测试失败。 |
 | `.../context/TenantContextTest.java` | 验证同线程先后请求租户不残留、缺上下文 fail closed、clear 幂等。 | 上下文行为变化时同步维护。 |
 | `.../persistence/config/TenantContextTenantLineHandlerTest.java` | 验证 handler 从上下文取值、无上下文抛 AUTHENTICATION_REQUIRED、根表忽略与租户表不忽略。 | 忽略表清单变化时同步维护。 |
-| `.../application/service/AdminBootstrapServiceTest.java` | 用内存仓储验证首次初始化创建完整数据、重复运行幂等、复用已存在租户，且持久化串不含原始密码。 | 事务回滚由容器级 IT 覆盖，本测试只覆盖幂等与散列语义。 |
+| `.../application/service/AdminBootstrapServiceTest.java` | 用内存仓储验证首次初始化、重复运行幂等、已有租户/角色/用户兼容性、过期绑定原地恢复，且持久化串不含原始密码。 | 内存仓储模拟绑定唯一约束；真实 PostgreSQL UPSERT 与事务回滚由容器级 IT 覆盖。 |
 
 ## 5. `knowagent-model`
 
@@ -217,7 +217,7 @@
 | `.../api/database/TenantIsolationIT.java` | 使用 PostgreSQL 16 和真实 TenantLineInnerInterceptor 验证普通查询自动追加 tenant 条件、缺上下文查询/写入 fail closed、显式 tenant SQL 无法枚举跨租户行、无租户 PO 插入由上下文填充。 | 新增租户拦截器行为或自定义 SQL 时在此补充跨租户用例。 |
 | `.../api/config/TenantContextFilterTest.java` | 用 Mock 请求/响应验证过滤器从 principal 注入租户、finally 清理、同线程先后请求不残留、不信任 X-Tenant-Id 头、下游抛异常后上下文仍被清理。 | 过滤器注册或 principal 解析变化时同步维护。 |
 | `.../api/bootstrap/AdminBootstrapRunnerTest.java` | 用假服务验证未启用跳过、缺密码/缺登录/弱密码拒绝启动且消息不泄露原始值、合法配置执行并规范化输入。 | Runner 参数或异常语义变化时同步维护。 |
-| `.../api/database/AdminBootstrapIT.java` | Testcontainers 上跑真实 Spring 上下文：首次执行创建完整数据、二次执行无重复、密码仅 Argon2id 哈希落库且 `matches` 验证通过、`insertRole` 注入失败时整体回滚（用非 `@Configuration` 的装饰 Bean 避免被组件扫描误注册）。 | Docker 可用时通过 `docker-it` Profile 运行。 |
+| `.../api/database/AdminBootstrapIT.java` | Testcontainers 上跑真实 Spring 上下文：首次执行与重复执行、Argon2id 哈希、失败整体回滚，以及过期绑定在唯一约束下原地恢复并重新获得 ADMIN 权限。 | Docker 可用时通过 `docker-it` Profile 运行；过期绑定恢复后仍必须只有一条自然键记录。 |
 
 ## 12. `knowagent-worker`
 
