@@ -13,6 +13,7 @@ import org.apache.ibatis.annotations.Select;
 @Mapper
 @InterceptorIgnore(tenantLine = "1")
 public interface TenantMapper extends BaseMapper<TenantPo> {
+    @InterceptorIgnore(tenantLine = "1")
     @Select("""
             SELECT id, slug, name, status, settings, version, created_at, updated_at, deleted_at
             FROM tenants
@@ -25,4 +26,24 @@ public interface TenantMapper extends BaseMapper<TenantPo> {
             @Result(column = "settings", property = "settings", typeHandler = JsonNodeJsonbTypeHandler.class)
     })
     TenantPo selectActiveBySlug(@Param("slug") String slug);
+
+    /**
+     * Bootstrap idempotency lookup: finds a tenant by slug regardless of status.
+     * {@code tenants} is the tenant root table (no {@code tenant_id} column), so the
+     * tenant-line handler already ignores it; the bypass annotation is kept for the
+     * same reason as {@link #selectActiveBySlug} and is locked by
+     * {@code SecurityMapperSqlContractTest}.
+     */
+    @InterceptorIgnore(tenantLine = "1")
+    @Select("""
+            SELECT id, slug, name, status, settings, version, created_at, updated_at, deleted_at
+            FROM tenants
+            WHERE slug = #{slug}
+              AND deleted_at IS NULL
+            LIMIT 1
+            """)
+    @Results({
+            @Result(column = "settings", property = "settings", typeHandler = JsonNodeJsonbTypeHandler.class)
+    })
+    TenantPo selectBySlug(@Param("slug") String slug);
 }

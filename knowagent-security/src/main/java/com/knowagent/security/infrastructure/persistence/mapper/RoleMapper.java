@@ -42,4 +42,27 @@ public interface RoleMapper extends BaseMapper<RolePo> {
     List<RolePo> selectEffectiveByUser(
             @Param("tenantId") UUID tenantId,
             @Param("userId") UUID userId);
+
+    /**
+     * Bootstrap idempotency lookup: finds a role by code inside one tenant regardless
+     * of status. Runs before any authentication exists, so the tenant-line plugin is
+     * bypassed; the SQL itself carries an explicit {@code tenant_id} condition as
+     * required by the pre-authentication exception rules.
+     */
+    @InterceptorIgnore(tenantLine = "1")
+    @Select("""
+            SELECT id, tenant_id, code, name, description, permissions, is_system,
+                   status, version, created_at, updated_at, deleted_at
+            FROM roles
+            WHERE tenant_id = #{tenantId}
+              AND code = #{code}
+              AND deleted_at IS NULL
+            LIMIT 1
+            """)
+    @Results({
+            @Result(column = "permissions", property = "permissions", typeHandler = PermissionSetJsonbTypeHandler.class)
+    })
+    RolePo selectByTenantAndCode(
+            @Param("tenantId") UUID tenantId,
+            @Param("code") String code);
 }

@@ -34,11 +34,14 @@ mvn -ntp clean verify
 - [ ] refresh token 只能使用一次，重放请求被拒绝。
 - [ ] tenant-A 用户通过 tenant-B 的资源 ID 查询时返回 404，不能泄露资源存在性。
 - [ ] 普通用户不能调用管理员接口。
-- [ ] MyBatis-Plus 普通查询自动添加 tenant 条件。
-- [ ] 自定义 SQL、锁查询和统计查询显式校验 tenant。
+- [x] MyBatis-Plus 普通查询自动添加 tenant 条件。
+- [x] 认证前自定义 SQL 显式携带 tenant 条件，且绕过租户插件的方法白名单精确锁定。
+- [ ] 锁查询、统计查询和批量更新 SQL 显式包含 tenant_id（即使租户插件能够改写普通自定义 SQL，也不能仅依赖自动改写）。
 - [ ] API Key、模型密钥和外部凭据不以明文存储或输出到日志。
+- [x] 开发者管理员初始化幂等创建租户、`ADMIN` 系统角色、管理员用户与 `user_roles` 绑定；密码只以 Argon2id 哈希落库，日志与异常不含明文；任一步失败整体回滚。
+- [x] 初始化存在性查询复用认证前显式租户查询，绕过 tenant-line 的方法白名单保持精确锁定。
 
-验收：使用 Testcontainers PostgreSQL 初始化两个租户，完成跨租户 ID 枚举和权限矩阵测试。
+验收：使用 Testcontainers PostgreSQL 初始化两个租户，完成跨租户 ID 枚举和权限矩阵测试。管理员初始化在 PostgreSQL 16 容器中验证首次执行、幂等、哈希与事务回滚（`mvn -Pdocker-it verify`）。
 
 ## 3. 数据库、事务与 Outbox
 

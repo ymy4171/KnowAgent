@@ -2,6 +2,7 @@ package com.knowagent.security.infrastructure.persistence.config;
 
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
+import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.autoconfigure.ConfigurationCustomizer;
 import com.knowagent.security.infrastructure.persistence.mapper.TenantMapper;
 import com.knowagent.security.infrastructure.persistence.typehandler.PostgresUuidTypeHandler;
@@ -16,6 +17,9 @@ public class SecurityPersistenceConfiguration {
     @Bean
     public MybatisPlusInterceptor mybatisPlusInterceptor() {
         MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
+        // Tenant line must run before the optimistic locker so every tenant-scoped
+        // statement is scoped to TenantContext before optimistic locking applies.
+        interceptor.addInnerInterceptor(new TenantLineInnerInterceptor(new TenantContextTenantLineHandler()));
         interceptor.addInnerInterceptor(new OptimisticLockerInnerInterceptor());
         return interceptor;
     }

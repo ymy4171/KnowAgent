@@ -2,9 +2,13 @@ package com.knowagent.security.infrastructure.persistence.converter;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.knowagent.common.error.BusinessException;
+import com.knowagent.common.tenant.TenantId;
+import com.knowagent.security.domain.role.Role;
 import com.knowagent.security.domain.role.RoleStatus;
+import com.knowagent.security.domain.tenant.Tenant;
 import com.knowagent.security.domain.tenant.TenantStatus;
 import com.knowagent.security.domain.token.RefreshTokenStatus;
+import com.knowagent.security.domain.user.User;
 import com.knowagent.security.domain.user.UserStatus;
 import com.knowagent.security.infrastructure.persistence.entity.RefreshTokenPo;
 import com.knowagent.security.infrastructure.persistence.entity.RolePo;
@@ -88,6 +92,35 @@ class IdentityPersistenceConverterTest {
         assertThat(role.permissions()).containsExactlyInAnyOrder("USER_READ", "USER_ADMIN");
         assertThatThrownBy(() -> role.permissions().add("MUTATE"))
                 .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void convertsTenantUserAndRoleDomainBackToPersistence() {
+        UUID tenantId = UUID.randomUUID();
+        Tenant tenant = new Tenant(TenantId.of(tenantId), "acme", "Acme Co", TenantStatus.ACTIVE,
+                OBJECT_MAPPER.createObjectNode().put("locale", "zh-CN"), 0L,
+                CREATED.toInstant(), UPDATED.toInstant(), null);
+        User user = new User(UUID.randomUUID(), tenant.id(), null, "admin@acme.test", "Acme Admin",
+                "admin@acme.test", null, null, "$argon2id$test-hash", UserStatus.ACTIVE,
+                0, null, null, null, 2L, CREATED.toInstant(), UPDATED.toInstant(), null);
+        Role role = new Role(UUID.randomUUID(), tenant.id(), "ADMIN", "Administrator",
+                "System administrator", Set.of("USER_READ", "ROLE_READ"), true,
+                RoleStatus.ACTIVE, 1L, CREATED.toInstant(), UPDATED.toInstant(), null);
+
+        TenantPo tenantPo = IdentityPersistenceConverter.toPersistence(tenant);
+        UserPo userPo = IdentityPersistenceConverter.toPersistence(user);
+        RolePo rolePo = IdentityPersistenceConverter.toPersistence(role);
+
+        assertThat(tenantPo.getId()).isEqualTo(tenantId);
+        assertThat(tenantPo.getSlug()).isEqualTo("acme");
+        assertThat(tenantPo.getStatus()).isEqualTo(TenantStatus.ACTIVE);
+        assertThat(tenantPo.getCreatedAt().toInstant()).isEqualTo(CREATED.toInstant());
+        assertThat(userPo.getTenantId()).isEqualTo(tenantId);
+        assertThat(userPo.getPasswordHash()).isEqualTo("$argon2id$test-hash");
+        assertThat(userPo.getVersion()).isEqualTo(2L);
+        assertThat(rolePo.getCode()).isEqualTo("ADMIN");
+        assertThat(rolePo.getPermissions()).containsExactlyInAnyOrder("USER_READ", "ROLE_READ");
+        assertThat(rolePo.getIsSystem()).isTrue();
     }
 
     @Test

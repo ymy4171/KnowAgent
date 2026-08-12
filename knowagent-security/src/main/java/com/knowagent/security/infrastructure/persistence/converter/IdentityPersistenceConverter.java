@@ -69,6 +69,72 @@ public final class IdentityPersistenceConverter {
         }
     }
 
+    public static TenantPo toPersistence(Tenant source) {
+        try {
+            TenantPo target = new TenantPo();
+            target.setId(source.id().value());
+            target.setSlug(source.slug());
+            target.setName(source.name());
+            target.setStatus(source.status());
+            target.setSettings(source.settings());
+            target.setVersion(source.version());
+            target.setCreatedAt(offsetDateTime(source.createdAt()));
+            target.setUpdatedAt(offsetDateTime(source.updatedAt()));
+            target.setDeletedAt(offsetDateTime(source.deletedAt()));
+            return target;
+        } catch (RuntimeException exception) {
+            throw invalidRow("tenant domain", exception);
+        }
+    }
+
+    public static UserPo toPersistence(User source) {
+        try {
+            UserPo target = new UserPo();
+            target.setId(source.id());
+            target.setTenantId(source.tenantId().value());
+            target.setDepartmentId(source.departmentId());
+            target.setLoginName(source.loginName());
+            target.setDisplayName(source.displayName());
+            target.setEmail(source.email());
+            target.setPhoneNumber(source.phoneNumber());
+            target.setAvatarObjectKey(source.avatarObjectKey());
+            target.setPasswordHash(source.passwordHash());
+            target.setStatus(source.status());
+            target.setLoginFailedCount(source.loginFailedCount());
+            target.setLastFailedLoginAt(offsetDateTime(source.lastFailedLoginAt()));
+            target.setLoginLockedUntil(offsetDateTime(source.loginLockedUntil()));
+            target.setLastLoginAt(offsetDateTime(source.lastLoginAt()));
+            target.setVersion(source.version());
+            target.setCreatedAt(offsetDateTime(source.createdAt()));
+            target.setUpdatedAt(offsetDateTime(source.updatedAt()));
+            target.setDeletedAt(offsetDateTime(source.deletedAt()));
+            return target;
+        } catch (RuntimeException exception) {
+            throw invalidRow("user domain", exception);
+        }
+    }
+
+    public static RolePo toPersistence(Role source) {
+        try {
+            RolePo target = new RolePo();
+            target.setId(source.id());
+            target.setTenantId(source.tenantId().value());
+            target.setCode(source.code());
+            target.setName(source.name());
+            target.setDescription(source.description());
+            target.setPermissions(source.permissions());
+            target.setIsSystem(source.system());
+            target.setStatus(source.status());
+            target.setVersion(source.version());
+            target.setCreatedAt(offsetDateTime(source.createdAt()));
+            target.setUpdatedAt(offsetDateTime(source.updatedAt()));
+            target.setDeletedAt(offsetDateTime(source.deletedAt()));
+            return target;
+        } catch (RuntimeException exception) {
+            throw invalidRow("role domain", exception);
+        }
+    }
+
     public static UserRolePo toPersistence(UserRole source) {
         try {
             UserRolePo target = new UserRolePo();

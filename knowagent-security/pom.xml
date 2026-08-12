@@ -25,6 +25,14 @@
             <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
             <version>${mybatis-plus.version}</version>
         </dependency>
+        <!-- Since MyBatis-Plus 3.5.9 the tenant-line interceptor lives in a separate
+             jsqlparser module. It is optional in the aggregator pom, so it is declared
+             explicitly here to keep TenantLineInnerInterceptor on the classpath. -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-jsqlparser-4.9</artifactId>
+            <version>${mybatis-plus.version}</version>
+        </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
@@ -32,6 +40,22 @@
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
+        </dependency>
+        <!-- Password hashing port is implemented with Spring Security's crypto
+             module (Argon2). crypto is deliberately NOT an HTTP dependency, so it
+             stays compatible with the rule that web/Servlet concerns never enter
+             this module. The BouncyCastle provider is required by
+             Argon2PasswordEncoder at runtime and is not version-managed by the
+             Spring Boot BOM, so it is pinned explicitly here (the minimal extra
+             provider needed for Argon2 to run). -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-crypto</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk18on</artifactId>
+            <version>1.80</version>
         </dependency>
     </dependencies>
 
