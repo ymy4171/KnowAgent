@@ -26,6 +26,7 @@ public final class SecurityPermissions {
     // Identity administration.
     public static final String USER_READ = "USER_READ";
     public static final String USER_WRITE = "USER_WRITE";
+    public static final String USER_ADMIN = "USER_ADMIN";
     public static final String ROLE_READ = "ROLE_READ";
     public static final String ROLE_WRITE = "ROLE_WRITE";
 

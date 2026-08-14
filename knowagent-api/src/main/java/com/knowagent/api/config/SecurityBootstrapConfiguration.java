@@ -5,6 +5,7 @@ import com.knowagent.api.security.JwtTenantAuthenticationToken;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.convert.converter.Converter;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.core.userdetails.UserDetailsService;
@@ -14,6 +15,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.intercept.AuthorizationFilter;
 
 @Configuration
+@EnableMethodSecurity
 public class SecurityBootstrapConfiguration {
 
     @Bean
@@ -34,7 +36,8 @@ public class SecurityBootstrapConfiguration {
                                 "/actuator/health/**",
                                 "/api/v1/system/info",
                                 "/api/v1/auth/login",
-                                "/api/v1/auth/refresh").permitAll()
+                                "/api/v1/auth/refresh",
+                                "/api/v1/auth/logout").permitAll()
                         .anyRequest().authenticated())
                 // Access tokens are validated by the OAuth2 Resource Server using
                 // Spring Security's own JOSE decoder and then converted into a

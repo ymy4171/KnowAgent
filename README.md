@@ -84,9 +84,9 @@ mvn spring-boot:run -pl knowagent-api
 
 ## 当前阶段
 
-项目目前已经完成多模块工程、核心领域端口、API/Worker 启动入口、Flyway V1-V11 共 31 张业务表和 Docker Compose 基础设施。后续优先实现：
+项目目前已经完成多模块工程、核心领域端口、API/Worker 启动入口、Flyway V1-V11 共 31 张业务表和 Docker Compose 基础设施。已实现：开发者管理员初始化（Argon2id 哈希、幂等、事务回滚）、Access Token 基础设施（Spring Security 官方 JOSE 签发/校验、租户声明与 TenantContext）、登录与当前用户接口（`POST /api/v1/auth/login` 返回 access/refresh token，Refresh Token 只存 SHA-256 哈希；`GET /api/v1/users/me` 返回当前身份、角色与权限；登录不持有外层事务——成功写入与失败计数各自独立单连接事务，并发失败登录不会耗尽连接池；失败计数数据库内原子递增并支持临时锁定，未知租户/用户与错误密码统一响应且工作量一致防计时枚举）、Refresh Token 轮换与登出（`POST /api/v1/auth/refresh` 单次使用并在事务内统一锁定家族根 token（`id = family_id` FOR UPDATE）后轮换出同家族子 token，旧 token 重放、并发冲突或唯一子 token 冲突（保存点恢复）撤销整个家族并返回稳定 401；账户状态与未来锁定时间使用共享策略校验；API 事务门面覆盖轮换与 Access Token 签名，签名失败时消费和子 token 插入整体回滚；`POST /api/v1/auth/logout` 为事务方法，按 token 定位家族根撤销仍有效 token，重复登出幂等；原始 token 永不落库或出现在日志）、最小 RBAC 闭环（生产启用 Method Security，`TenantPrincipal` 携带不可变 roles+permissions 并作为 JWT permissions claim 唯一来源；`GET /api/v1/users` 与 `GET /api/v1/users/{userId}` 需 `USER_READ`，租户一律来自认证 principal，分页/统计 SQL 显式携带 tenant_id 并留在租户插件下，跨租户 userId 与不存在用户统一 404，响应 DTO 结构上不可能泄露密码哈希等内部字段；`USER_ADMIN` 本阶段仅定义常量不授予任何人）。后续优先实现：
 
-1. 用户、角色、租户和 JWT 鉴权
+1. 用户、角色、租户管理写接口
 2. 知识库 CRUD 与文件上传
 3. 文档解析、分块、Embedding 和向量检索
 4. Agent 配置、RAG 问答和 SSE 流式输出

@@ -12,7 +12,6 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -22,9 +21,9 @@ import java.util.UUID;
  * <p>The token carries the Access Token contract claims: {@code iss},
  * {@code aud}, {@code sub} (user id), {@code tenant_id}, {@code roles},
  * {@code permissions}, {@code jti}, {@code iat} and {@code exp}. {@code jti} is a
- * fresh UUID per token. Roles and permissions are supplied by the caller (the
- * future login flow resolves the user's effective roles from the database); this
- * service only signs what it is given and never queries persistence itself.
+ * fresh UUID per token. Roles and permissions are read from the {@link TenantPrincipal}
+ * (resolved by the caller from the user's effective roles); this service only signs
+ * what it is given and never queries persistence itself.
  */
 @Service
 public class AccessTokenIssuer {
@@ -37,10 +36,8 @@ public class AccessTokenIssuer {
         this.properties = Objects.requireNonNull(properties, "properties must not be null");
     }
 
-    public IssuedAccessToken issue(TenantPrincipal principal, Set<String> permissions) {
+    public IssuedAccessToken issue(TenantPrincipal principal) {
         Objects.requireNonNull(principal, "principal must not be null");
-        Set<String> grantedPermissions =
-                Set.copyOf(Objects.requireNonNull(permissions, "permissions must not be null"));
         Instant now = Instant.now();
         Instant expiresAt = now.plus(properties.accessTokenTtl());
 
@@ -53,7 +50,7 @@ public class AccessTokenIssuer {
                 .id(UUID.randomUUID().toString())
                 .claim("tenant_id", principal.tenantId().value().toString())
                 .claim("roles", principal.roles())
-                .claim("permissions", grantedPermissions)
+                .claim("permissions", principal.permissions())
                 .build();
 
         Jwt jwt = encoder.encode(JwtEncoderParameters.from(

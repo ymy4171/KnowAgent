@@ -306,7 +306,7 @@ class TenantIsolationIT {
     }
 
     private static TenantPrincipal principal(UUID tenantId) {
-        return new TenantPrincipal(TenantId.of(tenantId), UUID.randomUUID(), Set.of("ROLE_USER"));
+        return new TenantPrincipal(TenantId.of(tenantId), UUID.randomUUID(), Set.of("ROLE_USER"), Set.of());
     }
 
     private static void insertTenant(TenantMapper mapper, UUID id, String slug) {

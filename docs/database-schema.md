@@ -91,7 +91,7 @@ Dispatcher 按 `queue_sequence` 选择最早的排队请求，并用 `FOR UPDATE
 
 - 根 Token 满足 `family_id = id`，子 Token 通过 `(tenant_id, parent_token_id, family_id)` 复合外键继承同一家族。
 - 一个父 Token 最多只能签发一个子 Token。
-- 正常刷新先锁定 Token，在同一事务中把旧 Token 标记为 `CONSUMED` 并插入子 Token。
+- 正常刷新先锁定 Token，在同一事务中把旧 Token 标记为 `CONSUMED`、插入子 Token 并签发 Access Token；签名失败时数据库写入整体回滚，避免子 Token 已落库但原始值未返回。
 - 已消费 Token 再次出现表示重放攻击；服务锁定该记录并把同一 `family_id` 下仍有效的 Token 全部更新为 `REVOKED`。
 - 数据库只保存 `token_hash`，原始 Refresh Token 只在签发响应中出现一次。
 

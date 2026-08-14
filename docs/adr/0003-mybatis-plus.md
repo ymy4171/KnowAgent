@@ -27,11 +27,13 @@ KnowAgent 的核心查询包含显式 tenant 过滤、状态条件更新、行�
 
 采用 MyBatis-Plus。普通查询使用 Mapper 和租户拦截器；自定义 SQL、锁查询、统计和批量更新必须显式包含 `tenant_id`，并通过 Testcontainers 验证。
 
+分页与统计不使用 MyBatis-Plus `PaginationInnerInterceptor`：代码库未装配该拦截器，且审查规则要求「统计只能通过显式租户条件执行」。受保护查询的分页改用显式 `LIMIT/OFFSET` + `SELECT COUNT(*)` 的自定义 SQL，两者都显式携带 `tenant_id = #{tenantId}` 与 `deleted_at IS NULL`，可选过滤条件用静态 `COALESCE(#{x},'')=''` 表达(不用动态 `<script>`,降低租户插件 JSqlParser 改写风险)。这类查询运行在认证请求内(TenantContext 已由过滤器保证存在),不进入认证前 `@InterceptorIgnore` 白名单,租户插件会额外注入相同的 `tenant_id` 作为 fail-closed 兜底;白名单仍由 `SecurityMapperSqlContractTest` 精确锁定为认证前方法。
+
 ## 后果
 
-正向：SQL 行为透明；复杂状态更新可精确表达；普通 CRUD 成本较低。
+正向：SQL 行为透明；复杂状态更新可精确表达；普通 CRUD 成本较低；分页与统计的可观测性与租户正确性由显式 SQL 保证。
 
-负向：领域对象与持久化对象需要显式转换；关联加载和聚合保存需要应用层编排；租户插件不能自动覆盖所有自定义 SQL。
+负向：领域对象与持久化对象需要显式转换；关联加载和聚合保存需要应用层编排；租户插件不能自动覆盖所有自定义 SQL；分页排序、LIKE 转义与 limit/offset 需要服务层自行处理。
 
 风险控制：禁止 Controller 直接调用 Mapper；审查自定义 SQL 的租户条件；为锁、索引和并发场景编写 PostgreSQL 集成测试。
 

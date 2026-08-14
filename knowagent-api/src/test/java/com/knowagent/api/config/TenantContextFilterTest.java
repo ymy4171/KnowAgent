@@ -126,7 +126,7 @@ class TenantContextFilterTest {
     }
 
     private static TenantPrincipal principal(UUID tenantId) {
-        return new TenantPrincipal(TenantId.of(tenantId), UUID.randomUUID(), Set.of("ROLE_USER"));
+        return new TenantPrincipal(TenantId.of(tenantId), UUID.randomUUID(), Set.of("ROLE_USER"), Set.of());
     }
 
     private static MockHttpServletRequest request() {

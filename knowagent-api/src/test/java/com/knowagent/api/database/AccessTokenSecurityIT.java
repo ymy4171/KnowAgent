@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.knowagent.api.KnowAgentApiApplication;
 import com.knowagent.api.security.JwtTestSupport;
 import com.knowagent.security.context.TenantContext;
-import it.contract.MethodSecurityTestConfig;
 import it.contract.ProtectedProbeController;
 import jakarta.servlet.Filter;
 import org.junit.jupiter.api.AfterAll;
@@ -95,7 +94,7 @@ class AccessTokenSecurityIT {
     static void bootContext() {
         managementPort = freePort();
         context = new SpringApplicationBuilder(KnowAgentApiApplication.class)
-                .sources(ProtectedProbeController.class, MethodSecurityTestConfig.class)
+                .sources(ProtectedProbeController.class)
                 .web(WebApplicationType.SERVLET)
                 .run(
                         "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
@@ -149,10 +148,12 @@ class AccessTokenSecurityIT {
         // main port answers 404 here - but critically NOT 401, which proves the
         // /actuator/health/** permitAll rule lets the request past the security chain.
         mockMvc.perform(get("/actuator/health")).andExpect(status().isNotFound());
-        // permitAll, not authenticated: a route without a controller yields 404,
-        // never 401 - proving the login/refresh routes are not protected.
-        mockMvc.perform(get("/api/v1/auth/login")).andExpect(status().isNotFound());
-        mockMvc.perform(get("/api/v1/auth/refresh")).andExpect(status().isNotFound());
+        // permitAll, not authenticated: the three auth controllers only accept POST,
+        // so a GET yields 405 (method not allowed) - never 401, proving each route is
+        // not protected. A GET to an unmapped path yields 404 (also never 401).
+        mockMvc.perform(get("/api/v1/auth/login")).andExpect(status().isMethodNotAllowed());
+        mockMvc.perform(get("/api/v1/auth/refresh")).andExpect(status().isMethodNotAllowed());
+        mockMvc.perform(get("/api/v1/auth/logout")).andExpect(status().isMethodNotAllowed());
     }
 
     @Test

@@ -40,8 +40,9 @@ class AccessTokenIssuerTest {
     @Test
     void issuedTokenCarriesTheAccessTokenContractClaims() {
         TenantPrincipal principal =
-                new TenantPrincipal(TenantId.of(TENANT_ID), USER_ID, Set.of("ADMIN", "ANALYST"));
-        IssuedAccessToken issued = issuer.issue(principal, Set.of("USER_READ", "TENANT_WRITE"));
+                new TenantPrincipal(TenantId.of(TENANT_ID), USER_ID, Set.of("ADMIN", "ANALYST"),
+                        Set.of("USER_READ", "TENANT_WRITE"));
+        IssuedAccessToken issued = issuer.issue(principal);
 
         Jwt decoded = rawDecoder().decode(issued.value());
 
@@ -64,8 +65,9 @@ class AccessTokenIssuerTest {
 
     @Test
     void issuedTokenPassesSignatureIssuerAudienceAndRequiredClaimValidation() {
-        TenantPrincipal principal = new TenantPrincipal(TenantId.of(TENANT_ID), USER_ID, Set.of("ADMIN"));
-        IssuedAccessToken issued = issuer.issue(principal, Set.of("USER_READ"));
+        TenantPrincipal principal = new TenantPrincipal(TenantId.of(TENANT_ID), USER_ID, Set.of("ADMIN"),
+                Set.of("USER_READ"));
+        IssuedAccessToken issued = issuer.issue(principal);
 
         Jwt decoded = validatedDecoder().decode(issued.value());
 
@@ -79,8 +81,8 @@ class AccessTokenIssuerTest {
         // so the service never signs a token it cannot authenticate. The user is
         // authenticated but carries no authorities - accessing a protected resource
         // will yield 403, not 401.
-        TenantPrincipal principal = new TenantPrincipal(TenantId.of(TENANT_ID), USER_ID, Set.of());
-        IssuedAccessToken issued = issuer.issue(principal, Set.of());
+        TenantPrincipal principal = new TenantPrincipal(TenantId.of(TENANT_ID), USER_ID, Set.of(), Set.of());
+        IssuedAccessToken issued = issuer.issue(principal);
 
         Jwt decoded = validatedDecoder().decode(issued.value());
         JwtTenantAuthenticationToken token = new JwtToTenantAuthenticationConverter().convert(decoded);
@@ -88,6 +90,7 @@ class AccessTokenIssuerTest {
         assertThat(token.getPrincipal().tenantId().value()).isEqualTo(TENANT_ID);
         assertThat(token.getPrincipal().userId()).isEqualTo(USER_ID);
         assertThat(token.getPrincipal().roles()).isEmpty();
+        assertThat(token.getPrincipal().permissions()).isEmpty();
         assertThat(token.getAuthorities()).isEmpty();
         assertThat(token.isAuthenticated()).isTrue();
         assertThat(token.getCredentials()).isNull();
@@ -95,8 +98,8 @@ class AccessTokenIssuerTest {
 
     @Test
     void toStringNeverExposesTheTokenValue() {
-        TenantPrincipal principal = new TenantPrincipal(TenantId.of(TENANT_ID), USER_ID, Set.of("ADMIN"));
-        IssuedAccessToken issued = issuer.issue(principal, Set.of());
+        TenantPrincipal principal = new TenantPrincipal(TenantId.of(TENANT_ID), USER_ID, Set.of("ADMIN"), Set.of());
+        IssuedAccessToken issued = issuer.issue(principal);
 
         assertThat(issued.toString()).doesNotContain(issued.value());
         assertThat(issuer.toString()).doesNotContain(issued.value());

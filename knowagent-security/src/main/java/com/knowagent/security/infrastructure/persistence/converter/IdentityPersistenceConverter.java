@@ -164,6 +164,30 @@ public final class IdentityPersistenceConverter {
         }
     }
 
+    public static RefreshTokenPo toPersistence(RefreshToken source) {
+        try {
+            RefreshTokenPo target = new RefreshTokenPo();
+            target.setId(source.id());
+            target.setTenantId(source.tenantId().value());
+            target.setUserId(source.userId());
+            target.setFamilyId(source.familyId());
+            target.setParentTokenId(source.parentTokenId());
+            target.setTokenHash(source.tokenHash());
+            target.setStatus(source.status());
+            target.setIssuedAt(offsetDateTime(source.issuedAt()));
+            target.setExpiresAt(offsetDateTime(source.expiresAt()));
+            target.setConsumedAt(offsetDateTime(source.consumedAt()));
+            target.setRevokedAt(offsetDateTime(source.revokedAt()));
+            target.setRevokeReason(source.revokeReason());
+            target.setIssuedIp(source.issuedIp());
+            target.setUserAgent(source.userAgent());
+            target.setVersion(source.version());
+            return target;
+        } catch (RuntimeException exception) {
+            throw invalidRow("refresh token domain", exception);
+        }
+    }
+
     private static Instant instant(OffsetDateTime value) {
         return value == null ? null : value.toInstant();
     }

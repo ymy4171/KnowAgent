@@ -30,7 +30,7 @@ class TenantContextTenantLineHandlerTest {
     @Test
     void getTenantIdReturnsCurrentContextTenant() {
         TenantContext.set(new TenantPrincipal(
-                TenantId.of(TENANT_ID), UUID.randomUUID(), Set.of("ROLE_USER")));
+                TenantId.of(TENANT_ID), UUID.randomUUID(), Set.of("ROLE_USER"), Set.of()));
 
         Expression expression = handler.getTenantId();
         assertThat(expression).isInstanceOf(StringValue.class);

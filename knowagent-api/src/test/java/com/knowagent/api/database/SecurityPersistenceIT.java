@@ -263,7 +263,10 @@ class SecurityPersistenceIT {
         try (SqlSession lockingSession = sessionFactory.openSession(false)) {
             MyBatisRefreshTokenStore store = new MyBatisRefreshTokenStore(
                     lockingSession.getMapper(RefreshTokenMapper.class));
-            var locked = store.findByTokenHashForUpdate(token.getTokenHash()).orElseThrow();
+            // The family-root lock (id = family_id, and the seed token is a root) is
+            // what refresh/replay/logout all take, and it holds a real row lock.
+            var locked = store.findFamilyRootForUpdate(
+                    TenantId.of(tenant.getId()), token.getFamilyId()).orElseThrow();
             assertThat(locked.belongsTo(TenantId.of(tenant.getId()), user.getId())).isTrue();
 
             try (Connection contender = dataSource.getConnection()) {

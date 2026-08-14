@@ -56,7 +56,7 @@ public final class JwtToTenantAuthenticationConverter implements Converter<Jwt, 
         Set<String> roles = stringSetClaim(jwt, "roles");
         Set<String> permissions = stringSetClaim(jwt, "permissions");
 
-        TenantPrincipal principal = new TenantPrincipal(TenantId.of(tenantId), userId, roles);
+        TenantPrincipal principal = new TenantPrincipal(TenantId.of(tenantId), userId, roles, permissions);
         List<GrantedAuthority> authorities = new ArrayList<>(roles.size() + permissions.size());
         roles.forEach(role -> authorities.add(new SimpleGrantedAuthority("ROLE_" + role)));
         permissions.forEach(permission -> authorities.add(new SimpleGrantedAuthority(permission)));

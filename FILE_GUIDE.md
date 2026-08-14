@@ -58,22 +58,36 @@
 | `.../security/context/TenantContext.java` | 请求级租户上下文，用普通 ThreadLocal 保存 TenantPrincipal；`requireTenantId()` 在无上下文时 fail closed 抛出 AUTHENTICATION_REQUIRED。 | 只允许 API 过滤器 set/clear，Controller 和跨模块调用方不得直接操作；Worker 后续从任务信封填充。 |
 | `.../security/domain/package-info.java` | 声明身份认证领域层不依赖持久化对象。 | 新增安全领域行为时保持基础设施类型在边界外。 |
 | `.../security/domain/tenant/Tenant.java`、`TenantStatus.java` | 表示租户身份、不可变 JSON settings 及 ACTIVE/SUSPENDED/DISABLED 状态。 | 登录前按 slug 解析租户，状态名保持与数据库 CHECK 一致。 |
-| `.../security/domain/user/User.java`、`UserStatus.java` | 表示本地用户、密码散列、锁定信息和乐观锁版本，并在字符串输出中隐藏密码散列。 | 后续登录应用服务校验状态、密码和失败计数。 |
+| `.../security/domain/user/User.java`、`UserStatus.java` | 表示本地用户、密码散列、锁定信息和乐观锁版本，并在字符串输出中隐藏密码散列。 | 登录应用服务校验状态、密码和失败计数；用户管理查询返回该领域对象。 |
+| `.../security/domain/user/UserPage.java` | 表示租户内用户分页结果（不可变用户列表 + 非负总数）。 | 用户管理查询端口返回它，禁止直接返回持久化对象。 |
 | `.../security/domain/role/Role.java`、`RoleStatus.java` | 表示租户角色及不可变权限集合。 | 登录和 RBAC 应用服务加载有效角色后聚合权限。 |
 | `.../security/domain/role/UserRole.java` | 表示用户角色绑定及有效期。 | 管理员初始化和授权写入使用，过期判断不依赖 HTTP 层。 |
-| `.../security/domain/role/SecurityPermissions.java` | 集中定义后续管理接口需要的稳定权限码（TENANT_/DEPARTMENT_/USER_/ROLE_/MODEL_PROVIDER_ 读写、AUDIT_READ），并提供 `ADMIN_ROLE_PERMISSIONS`。 | 任何地方都从它引用权限码，禁止散落魔法字符串。 |
-| `.../security/domain/token/RefreshToken.java`、`RefreshTokenStatus.java` | 表示 Refresh Token 家族、所有权、生命周期和版本；字符串输出不包含 token_hash。 | 后续轮换服务必须在事务内锁定并校验租户与用户关系。 |
+| `.../security/domain/role/SecurityPermissions.java` | 集中定义后续管理接口需要的稳定权限码（TENANT_/DEPARTMENT_/USER_/ROLE_/MODEL_PROVIDER_ 读写、AUDIT_READ），并提供 `ADMIN_ROLE_PERMISSIONS`；`USER_ADMIN` 本阶段只定义常量、不加入 `ADMIN_ROLE_PERMISSIONS`、不授予任何人。 | 任何地方都从它引用权限码，禁止散落魔法字符串。 |
+| `.../security/domain/token/RefreshToken.java`、`RefreshTokenStatus.java` | 表示 Refresh Token 家族、所有权、生命周期和版本；字符串输出不包含 token_hash。 | 轮换/重放/登出在事务内锁定家族根 token（`id = family_id` FOR UPDATE）后重读校验状态、过期与租户/用户关系。 |
 | `.../security/application/port/out/package-info.java` | 声明安全应用层访问数据库的输出端口边界。 | 应用服务只依赖端口，禁止暴露 Mapper。 |
-| `.../security/application/port/out/TenantRepository.java` | 提供 ACTIVE、未删除租户的 slug 查询端口。 | 登录前租户解析调用。 |
-| `.../security/application/port/out/UserRepository.java` | 提供显式 tenantId + loginName 的未删除用户查询端口。 | 登录前调用，不依赖尚未建立的 TenantContext。 |
+| `.../security/application/port/out/TenantRepository.java` | 提供 ACTIVE、未删除租户的 slug 与 ID 查询端口（`findActiveBySlug`/`findActiveById`）。 | 登录前租户解析、/users/me 租户校验调用。 |
+| `.../security/application/port/out/UserRepository.java` | 提供显式 tenantId + loginName 的未删除用户查询端口，以及显式租户的用户 ID 查询、带版本守卫的登录状态更新、数据库原子失败计数递增和租户内用户分页（`findById`/`updateLoginState`/`recordLoginFailure`/`search`，`search` 接收服务层预先转义的 LIKE pattern 与可空状态，返回 `UserPage`）。 | 登录前调用，不依赖尚未建立的 TenantContext；`updateLoginState` 返回 false 表示并发冲突，`recordLoginFailure` 返回受影响行数；`search` 的分页/统计 SQL 显式携带 tenant_id。 |
 | `.../security/application/port/out/RoleRepository.java` | 提供显式租户和用户的当前有效角色查询端口。 | 登录和鉴权阶段聚合角色与 permissions。 |
-| `.../security/application/port/out/RefreshTokenStore.java` | 提供全局唯一 token_hash 普通查询和事务内 `FOR UPDATE` 查询端口。 | 调用方必须在锁定事务中校验返回记录的 tenantId/userId。 |
+| `.../security/application/port/out/RefreshTokenStore.java` | 提供全局唯一 token_hash 普通查询、按 id+tenant 重读（`findById`）、家族根锁（`findFamilyRootForUpdate`，按 `id = family_id` FOR UPDATE 串行化整个家族）、插入（`insert`）与保存点子插入（`insertChild`，仅子 token 冲突回滚插入）、CAS 消费（`consume`，按 ACTIVE 守卫返回布尔）与家族撤销（`revokeFamily`，撤销家族内仍 ACTIVE 的 token，显式携带 tenant_id）端口；插入只接收只含哈希的领域模型。 | 登录签发 token 时插入；轮换在锁定事务中消费旧 token 并插入子 token，重放/登出时锁定家族根后撤销整个家族。 |
 | `.../security/application/port/out/UserRoleStore.java` | 提供用户角色绑定写入端口。 | 管理员初始化和授权应用服务通过该端口写入，禁止直接调用 Mapper。 |
 | `.../security/application/port/out/PasswordHasher.java` | 密码散列输出端口：`encode` 与 `matches`。 | 只接受原始密码并返回散列，禁止把明文传入持久化层。 |
 | `.../security/application/port/out/AdminBootstrapRepository.java` | 开发管理员初始化的持久化边界：租户/角色/用户幂等查询，以及用户角色绑定的原子确保操作。 | 仅被 AdminBootstrapService 使用；认证前查询和绑定 UPSERT 均显式携带 tenant_id。 |
 | `.../security/application/service/AdminBootstrap.java` | 开发管理员初始化入端口：`initialize(AdminBootstrapRequest)`。 | 启动 Runner 调用，不暴露任何 HTTP 端点。 |
 | `.../security/application/service/AdminBootstrapRequest.java` | 校验并规范化初始化参数：slug/login 小写、缺省名回退、密码至少 12 字符、拒绝空值。 | 参数来自环境变量，校验失败即拒绝启动，不自动生成密码。 |
 | `.../security/application/service/AdminBootstrapService.java` | 幂等创建租户、`ADMIN` 系统角色、管理员用户和 `user_roles` 绑定，整体 `@Transactional`；密码经 PasswordHasher（Argon2id）编码后落库，UUID 全部在 Java 预生成。 | 绑定通过原子 UPSERT 创建或恢复过期记录；重复启动不产生重复数据，任一步失败全部回滚。 |
+| `.../security/application/service/Login.java`、`LoginCommand.java`、`LoginResult.java` | 登录入端口、不可变命令（含来源 IP 与 User-Agent，字符串输出隐藏密码）与结果（principal、permissions、一次性 refresh token 原始值、过期时间，字符串输出隐藏 token）。 | Controller 只依赖 Login 端口，不接触 Mapper；Command 由 API 层从 HTTP 请求构造。 |
+| `.../security/application/service/LoginPolicies.java` | 不可变登录策略：最大失败次数、临时锁定窗口、Refresh Token 有效期，构造时校验全为正数。 | 由 API 层的 `auth.login.*` 配置属性映射，禁止在代码里写死阈值。 |
+| `.../security/application/service/AccountAuthenticationPolicy.java` | 登录与刷新共用的账户状态规则：未来 `login_locked_until` 无论 status 是否仍为 ACTIVE 都视为临时锁；登录允许 LOCKED + 过期窗口用密码恢复，刷新只允许无有效锁窗口的 ACTIVE 用户。 | 状态或锁定语义变化时只在此处调整，避免登录与刷新判断漂移。 |
+| `.../security/application/service/LoginService.java` | **不持有事务**的登录主流程：标准化 slug/login → 解析 ACTIVE 租户 → 按租户查询用户 → 状态检查 → Argon2id 校验 → 聚合有效角色与权限 → 委托 `LoginSuccessHandler` 提交成功写入。所有读为自动提交、写各自独立事务，单个登录最多持有一个数据库连接（并发失败登录不会耗尽连接池）；未知租户/用户/密码统一 INVALID_CREDENTIALS，且未知账号也执行一次预计算 dummy Argon2 校验、未知租户用固定 dummy tenant ID 跑一次用户查询，使三者工作量一致（防计时枚举）；禁用/锁定返回稳定错误码，锁定按窗口判定（LOCKED+过期窗口可重试、LOCKED+空窗口视为永久锁）。 | 不负责签名 Access Token（由 API 层 AccessTokenIssuer 完成）；Refresh Token 轮换与登出由 `RefreshTokenService` 承担（见下）。 |
+| `.../security/application/service/LoginSuccessHandler.java` | 登录成功写入的独立事务服务（`@Transactional`）：带版本守卫的登录状态更新（返回 false 抛 CONFLICT）+ Refresh Token 插入（只存 SHA-256 哈希）在同一事务提交，并生成高熵（32 字节 Base64url）Refresh Token 原始值。 | 因 `LoginService` 无外层事务，该事务独立提交，与失败路径互不干扰；轮换与单次使用由 `RefreshTokenService` 在锁定事务中实现。 |
+| `.../security/application/service/LoginFailureRecorder.java` | 在普通独立事务（`@Transactional`，因 `LoginService` 无外层事务故不再嵌套 `REQUIRES_NEW`）里把失败计数原子递增并在达到阈值时置 LOCKED + 临时锁定窗口（经 `UserRepository.recordLoginFailure` 走数据库侧 `login_failed_count + 1`）。 | 解决登录方法抛异常导致失败计数随事务回滚的问题；数据库原子递增保证并发错误密码不丢失计数、无法绕过锁定阈值；单登录单连接，不再有池耗尽风险。 |
+| `.../security/application/service/CurrentUser.java`、`CurrentUserService.java` | `/users/me` 的应用服务：按已认证 principal 加载 ACTIVE 租户、未删除用户与有效角色，聚合角色码和权限；缺失即抛 RESOURCE_NOT_FOUND。 | 供 UserController 读取当前用户身份，禁止直接返回持久化对象。 |
+| `.../security/application/service/UserQueryService.java` | 租户内用户查询应用服务：`pageUsers` 校验分页参数（page<1、size∉[1,100] 或计算后的 OFFSET 超出持久化层支持范围 → VALIDATION_ERROR）、trim/空白化 keyword、按 `\ → \\, % → \%, _ → \_` 转义并包裹 `%...%` 生成 LIKE pattern 后委托 `search`；`userDetail` 按租户+ID 查用户，空 → RESOURCE_NOT_FOUND。租户一律由调用方（来自 principal）传入，服务层不解析任何请求参数。 | 供 UserController 查询，禁止直接返回持久化对象；keyword 转义在服务层完成，避免 SQL 注入。 |
+| `.../security/application/service/RefreshTokens.java` | 轮换与登出入端口：`refresh(RefreshCommand)` 返回 `LoginResult`（与登录同构），`logout(LogoutCommand)` 无返回值。 | Controller 只依赖该端口，不接触 Mapper。 |
+| `.../security/application/service/RefreshCommand.java`、`LogoutCommand.java` | 不可变命令：`RefreshCommand` 携带原始 token、来源 IP 与 User-Agent，`LogoutCommand` 携带原始 token；字符串输出均隐藏原始 token。 | 由 API 层从 HTTP 请求构造，原始 token 只被哈希后用于查询。 |
+| `.../security/application/service/RefreshTokenInvalidException.java` | 轮换拒绝的稳定业务异常（INVALID_CREDENTIALS→401），消息不泄露家族/会话信息；`refresh` 声明为 `noRollbackFor` 使重放撤销仍提交。 | 未知/过期/撤销/已消费 token 与唯一子 token 冲突统一抛它。 |
+| `.../security/application/service/RefreshTokenHashes.java` | 包内工具：SHA-256 十六进制哈希、32 字节 Base64url 原始 token 生成、User-Agent 截断。 | 登录与轮换共用，禁止在其他地方拼接或记录原始 token。 |
+| `.../security/application/service/RefreshTokenService.java` | 轮换与登出主流程（`refresh` 与 `logout` 均为事务方法）：先锁定家族根 token（`findFamilyRootForUpdate`，`id = family_id` FOR UPDATE）→ 锁下按 id 重读校验状态/过期/共享账户策略/租户 → CAS 消费（失败按并发撤销家族）→ 保存点插入同家族子 token（`insertChild`，仅 `uq_refresh_tokens_one_child` 冲突转重放，其他唯一约束原样抛出）→ 聚合角色权限返回 LoginResult；CONSUMED 重放/CAS 失败/子插入冲突都撤销家族并抛稳定异常；`logout` 按 hash 定位家族根并撤销仍有效 token（幂等）。 | 运行在认证前无 TenantContext，写入 SQL 显式携带 tenant_id 并纳入 tenant-line 白名单；API 层事务门面继续覆盖 JWT 签名。 |
 | `.../security/infrastructure/persistence/package-info.java` | 声明安全模块 MyBatis-Plus 持久化适配边界。 | 基础设施实现只向应用层暴露端口。 |
 | `.../persistence/entity/TenantPo.java`、`UserPo.java`、`RolePo.java`、`UserRolePo.java`、`RefreshTokenPo.java` | 映射五张认证主链表的 UUID、枚举、timestamptz、jsonb、inet 和 version 字段；主键使用应用输入模式。 | 仅供 Mapper 和转换器使用，禁止直接返回 Controller。 |
 | `.../persistence/typehandler/JsonNodeJsonbTypeHandler.java` | 使用 Jackson 和 PostgreSQL `PGobject` 映射通用 JSONB。 | 租户 settings 等 JSON 对象字段复用。 |
@@ -82,11 +96,11 @@
 | `.../persistence/typehandler/PostgresUuidTypeHandler.java` | 为 MyBatis-Plus 自动 ResultMap 显式映射 PostgreSQL UUID。 | 所有应用预生成 UUID 的持久化对象复用。 |
 | `.../persistence/converter/IdentityPersistenceConverter.java` | 将五类持久化对象转换为领域模型，并把损坏数据转换为稳定内部错误；`toPersistence` 支持 Tenant/User/Role/UserRole 反向转换。 | 写入端口增加时在同一边界补充反向转换。 |
 | `.../persistence/mapper/TenantMapper.java` | 查询 ACTIVE、未删除租户，并整体忽略 tenant-line 插件；`selectBySlug` 供初始化幂等查询。 | `tenants` 没有 tenant_id，禁止被租户插件改写。 |
-| `.../persistence/mapper/UserMapper.java` | 用显式 tenant_id + login_name 查询未删除用户。 | 认证前查询方法绕过 tenant-line，但 SQL 自身保持租户条件。 |
+| `.../persistence/mapper/UserMapper.java` | 用显式 tenant_id + login_name 查询未删除用户（`selectByTenantAndLoginName`），显式租户的用户 ID 查询（`selectByIdAndTenant`），带版本守卫的登录状态更新（`updateLoginState`：仅更新登录状态字段并 `version=version+1`，`WHERE ... AND version=#{version}`），数据库原子失败计数递增（`recordLoginFailure`：`login_failed_count + 1`，达到阈值置 LOCKED + 窗口），以及租户内用户分页与统计（`selectUserPage`：`LIMIT/OFFSET` + 可选 status/keyword 的 `COALESCE` 静态条件 + `LIKE ... ESCAPE`；`countUsers`：同 WHERE 的 `SELECT COUNT(*)`，两者均显式携带 tenant_id）。 | 认证前查询/写入方法绕过 tenant-line，但 SQL 自身保持租户条件；`updateLoginState` 返回影响行数判断并发冲突，`recordLoginFailure` 靠数据库原子递增保证并发计数不丢失；`selectUserPage`/`countUsers` **不加** `@InterceptorIgnore`，留在租户插件下并显式携带 tenant_id。 |
 | `.../persistence/mapper/RoleMapper.java` | 显式联结 users、user_roles、roles 并过滤禁用、删除和过期授权；`selectByTenantAndCode` 供初始化幂等查询。 | 自定义 SQL 必须继续对每个租户表保留 tenant_id 条件。 |
 | `.../persistence/mapper/UserRoleMapper.java` | 提供用户角色绑定的 MyBatis-Plus 基础映射，以及 `ensureEffectiveAssignment` 原子 UPSERT：缺失时插入、过期时恢复、有效时保持不变。 | SQL 显式携带 tenant_id，并依赖 `uq_user_roles_assignment` 防止重复绑定；后续服务通过应用端口使用。 |
-| `.../persistence/mapper/RefreshTokenMapper.java` | 按全局唯一 token_hash 查询，并提供 `FOR UPDATE` 锁查询。 | 这是认证前无 tenant 上下文的受控例外，返回后仍校验所有权。 |
-| `.../persistence/repository/MyBatisTenantRepository.java`、`MyBatisUserRepository.java`、`MyBatisRoleRepository.java`、`MyBatisRefreshTokenStore.java` | 将查询输出端口适配到 Mapper，并返回领域模型；实现类保持可被 Spring 类代理。 | Controller 和跨模块调用方不得绕过这些端口。 |
+| `.../persistence/mapper/RefreshTokenMapper.java` | 按全局唯一 token_hash 查询（文档化例外），按 id+tenant 重读（`selectByIdAndTenant`），家族根锁（`selectFamilyRootForUpdate`：`WHERE tenant_id=? AND id=#{familyId} ... FOR UPDATE`，`id = family_id` 串行化整个家族），CAS 消费（`consumeActive`：`WHERE tenant_id=? AND id=? AND status='ACTIVE'`，更新 status/consumed_at/version）与家族撤销（`revokeActiveFamily`：`WHERE tenant_id=? AND family_id=? AND status='ACTIVE'`，更新 status/revoked_at/revoke_reason/version），均显式携带 tenant_id。 | 认证前无 tenant 上下文的受控例外，绕过 SQL 自身保持租户条件；返回后仍校验所有权。 |
+| `.../persistence/repository/MyBatisTenantRepository.java`、`MyBatisUserRepository.java`、`MyBatisRoleRepository.java`、`MyBatisRefreshTokenStore.java` | 将查询与写入输出端口适配到 Mapper，并返回领域模型；`MyBatisRefreshTokenStore` 的 `insertChild` 用 `Propagation.NESTED` 保存点执行插入（唯一子 token 冲突只回滚插入、外层事务仍可撤销家族），`consume` 以 `consumeActive` 受影响行数为真值（CAS），`revokeFamily` 委托 `revokeActiveFamily`；`MyBatisUserRepository.search` 先 `countUsers` 再 `selectUserPage` 并映射 `UserPage`；实现类保持可被 Spring 类代理。 | Controller 和跨模块调用方不得绕过这些端口。 |
 | `.../persistence/repository/MyBatisUserRoleStore.java` | 将用户角色写入端口适配到 UserRoleMapper。 | 后续初始化和授权应用服务只依赖 UserRoleStore。 |
 | `.../persistence/repository/MyBatisAdminBootstrapRepository.java` | 将初始化持久化端口适配到四个 Mapper；用户角色绑定调用原子 UPSERT，其他写入失败抛稳定内部错误。 | 仅供 AdminBootstrapService 使用，认证前不依赖 TenantContext，租户范围由显式 tenant_id 保证。 |
 | `.../infrastructure/crypto/SpringSecurityArgon2PasswordHasher.java` | 用 Spring Security 的 Argon2PasswordEncoder（Argon2id）实现 PasswordHasher 端口。 | 生产与初始化共用，成本参数用框架默认值。 |
@@ -94,10 +108,11 @@
 | `.../persistence/config/TenantContextTenantLineHandler.java` | 租户拦截器 handler：从 TenantContext.requireTenantId() 取值（fail closed），显式忽略无 tenant_id 的 tenants 与 flyway_schema_history 表。 | 新增无 tenant_id 的基础设施表时在此补充忽略项。 |
 | `.../persistence/converter/IdentityPersistenceConverterTest.java` | 验证五类转换、不可变 permissions、时间和敏感字段字符串输出。 | 领域或表字段变化时同步维护。 |
 | `.../persistence/typehandler/PersistenceTypeHandlerTest.java` | 验证 JSONB permissions 校验和 inet IPv4/IPv6 映射。 | TypeHandler 变化时保持非法输入覆盖。 |
-| `.../persistence/mapper/SecurityMapperSqlContractTest.java` | 固定认证前 SQL 的租户条件、Tenant 根表例外及 Refresh Token 锁语义，并精确锁定允许绕过 tenant-line 的 Mapper 方法白名单（含初始化的三个存在性查询）。 | 新增自定义安全 SQL 时加入显式租户审查断言；任何新增绕过方法都会使白名单测试失败。 |
+| `.../persistence/mapper/SecurityMapperSqlContractTest.java` | 固定认证前 SQL 的租户条件、Tenant 根表例外及 Refresh Token 锁语义，并精确锁定允许绕过 tenant-line 的 Mapper 方法白名单（含初始化的三个存在性查询）；正向断言 `selectUserPage`/`countUsers` 显式携带 tenant_id、deleted_at IS NULL、LIMIT/OFFSET 且**未被** `@InterceptorIgnore` 标注。 | 新增自定义安全 SQL 时加入显式租户审查断言；任何新增绕过方法都会使白名单测试失败。 |
 | `.../context/TenantContextTest.java` | 验证同线程先后请求租户不残留、缺上下文 fail closed、clear 幂等。 | 上下文行为变化时同步维护。 |
 | `.../persistence/config/TenantContextTenantLineHandlerTest.java` | 验证 handler 从上下文取值、无上下文抛 AUTHENTICATION_REQUIRED、根表忽略与租户表不忽略。 | 忽略表清单变化时同步维护。 |
 | `.../application/service/AdminBootstrapServiceTest.java` | 用内存仓储验证首次初始化、重复运行幂等、已有租户/角色/用户兼容性、过期绑定原地恢复，且持久化串不含原始密码。 | 内存仓储模拟绑定唯一约束；真实 PostgreSQL UPSERT 与事务回滚由容器级 IT 覆盖。 |
+| `.../application/service/UserQueryServiceTest.java` | 用记录型 fake 仓储验证分页参数与 tenant/pattern/status 严格透传、空白 keyword 转 null、`buildLikePattern` 对 `\`/`%`/`_`/中文的转义、非法分页及 OFFSET 溢出 → VALIDATION_ERROR、详情命中与未知/跨租户 → RESOURCE_NOT_FOUND，以及服务层不解析任何请求参数。 | 分页或过滤语义变化时同步维护。 |
 
 ## 5. `knowagent-model`
 
@@ -203,12 +218,18 @@
 |---|---|---|
 | `knowagent-api/pom.xml` | 聚合全部业务模块并引入 Spring MVC、Security、数据库、Redis、Flyway；`docker-it` Profile 使用 Failsafe 运行 Testcontainers。 | Controller、SseEmitter、请求 DTO、认证过滤器和基础设施 Bean 在此装配；数据库迁移集成测试用 `mvn -Pdocker-it verify` 执行。 |
 | `.../api/KnowAgentApiApplication.java` | HTTP API 进程的 Spring Boot 启动入口；Mapper 扫描由各业务模块配置负责。 | 保持薄启动类，避免全根包扫描把应用端口误注册为 Mapper。 |
-| `.../api/config/SecurityBootstrapConfiguration.java` | 基于 Servlet `SecurityFilterChain` 的安全配置：放行健康检查和系统信息接口，并在认证过滤器之后、`AuthorizationFilter` 之前注册 `TenantContextFilter`。 | 替换为 JWT、RBAC 和统一未认证响应时，保持认证、租户上下文、授权三者的执行顺序。 |
+| `.../api/config/SecurityBootstrapConfiguration.java` | 基于 Servlet `SecurityFilterChain` 的安全配置：类级 `@EnableMethodSecurity` 启用 `@PreAuthorize` 方法鉴权（拒绝时复用 `JsonAccessDeniedHandler` 输出 JSON 403）；放行健康检查和系统信息接口，并在认证过滤器之后、`AuthorizationFilter` 之前注册 `TenantContextFilter`。 | 替换为 JWT、RBAC 和统一未认证响应时，保持认证、租户上下文、授权三者的执行顺序。 |
 | `.../api/config/TenantContextFilter.java` | `OncePerRequestFilter`：从 SecurityContextHolder 的认证 principal 解析 TenantPrincipal 写入 TenantContext，并在 finally 清理；不信任任何客户端请求头。 | 内联构造，不注册为 Spring Bean，避免被 Boot 二次注册到普通 Servlet 链。 |
 | `.../api/bootstrap/AdminBootstrapProperties.java` | 把 `bootstrap.*` 配置映射到 `BOOTSTRAP_ENABLED`、`BOOTSTRAP_TENANT_SLUG`、`BOOTSTRAP_ADMIN_LOGIN`、`BOOTSTRAP_ADMIN_PASSWORD` 等环境变量。 | 启动装配使用，字段名即文档。 |
 | `.../api/bootstrap/AdminBootstrapConfiguration.java` | 启用 bootstrap 配置属性并注册 AdminBootstrapRunner Bean。 | 保持 `proxyBeanMethods=false`，只做装配不做逻辑。 |
 | `.../api/bootstrap/AdminBootstrapRunner.java` | `ApplicationRunner`：未启用时记 INFO 并跳过；启用后校验参数并调用初始化，缺参/弱密码包装为 IllegalStateException 拒绝启动，消息不含原始密码，成功日志只输出 slug 与 login。 | 是初始化唯一触发点，禁止暴露为 HTTP 端点。 |
 | `.../api/system/SystemInfoController.java` | 提供 `/api/v1/system/info`，用于验证 API 已启动。 | 可增加公开版本信息，不能暴露密钥和内部配置。 |
+| `.../api/auth/AuthController.java` | `POST /api/v1/auth/login`（匿名）：映射 LoginCommand、调用 Login 并签发 Access Token；`POST /api/v1/auth/refresh`（匿名）：把 RefreshCommand 委托给 RefreshAuthenticationService；`POST /api/v1/auth/logout`（匿名）：映射 LogoutCommand 调用 RefreshTokens，返回 204。 | 只做 HTTP 装配，不接触 Mapper；刷新事务协调不放在 Controller。 |
+| `.../api/auth/RefreshAuthenticationService.java` | API 层刷新事务门面：在同一 `@Transactional(noRollbackFor=RefreshTokenInvalidException.class)` 边界内调用 RefreshTokens 完成数据库轮换、调用 AccessTokenIssuer 签名并构造 LoginResponse。 | JWT 签名或响应构造失败时回滚消费与子 token 插入；重放异常仍提交家族撤销，同时保持 security 模块不依赖 JWT/Web。 |
+| `.../api/auth/dto/LoginRequest.java`、`LoginResponse.java`、`RefreshTokenRequest.java` | 登录请求/响应与轮换请求 DTO：请求校验 tenantSlug/loginName/password 非空与长度上限、refreshToken 非空且不超过 512 字符，响应携带 tokenType、accessToken、refreshToken、expiresIn；所有字符串输出均隐藏敏感字段（RefreshTokenRequest 字符串输出隐藏原始 token）。 | 校验失败由 ApiExceptionHandler 统一转 JSON 400。 |
+| `.../api/auth/LoginProperties.java`、`LoginConfiguration.java` | 把 `auth.login.*` 配置映射为类型安全属性并装配 `LoginPolicies` Bean（maxFailedAttempts、lockDuration、refreshTokenTtl）。 | 字段名即文档，阈值禁止在代码里写死。 |
+| `.../api/user/UserController.java`、`dto/MeResponse.java`、`dto/UserItemResponse.java`、`dto/UserPageResponse.java` | `GET /api/v1/users/me`：从 `@AuthenticationPrincipal TenantPrincipal` 读取当前身份，调用 CurrentUserService，返回 userId/tenantId/tenantSlug/loginName/displayName/roles/permissions（角色与权限排序稳定，不包含密码哈希、锁定计数等内部字段）。`GET /api/v1/users` 与 `GET /api/v1/users/{userId}`：均 `@PreAuthorize("hasAuthority('USER_READ')")`，从 principal 取 `tenantId()` 调用 UserQueryService，返回 `UserPageResponse`/`UserItemResponse`（仅 userId/departmentId/loginName/displayName/email/phoneNumber/status/createdAt，结构上不可能泄露内部字段）；分页默认 page=1、size=20。 | 依赖已有 Access Token 认证链，匿名访问得到 JSON 401；管理查询跨租户 userId 与不存在用户统一 404，非法参数 400。 |
+| `.../api/error/ApiErrorResponse.java`、`ApiExceptionHandler.java` | 统一 JSON 错误响应与 `@RestControllerAdvice`：BusinessException 按 ErrorCode 映射 HTTP 状态（401/403/404/409/502/500），DTO 校验与畸形 JSON 统一 400 VALIDATION_ERROR，无匹配路由 404 RESOURCE_NOT_FOUND，`MethodArgumentTypeMismatchException`（非法枚举/非法 UUID 等）统一 400 VALIDATION_ERROR。刻意不提供 `Exception.class` 兜底，避免把方法级鉴权 AccessDeniedException 和 405/415 吞成 500。 | 后续所有 Controller 复用；错误码与状态映射变化只改这一处。 |
 | `.../resources/application.yml` | API 端口、数据源、Redis、Flyway、Actuator 和日志配置。 | 通过环境变量覆盖，不在文件中写生产密码。 |
 | `.../resources/db/migration/V1__baseline.sql` | 已发布的 Flyway 空基线，用于固定迁移起点。 | 保持内容不变，禁止修改已执行迁移的校验和。 |
 | `.../resources/db/migration/V2__identity_core.sql` 至 `V11__mcp.sql` | 按身份、权限、凭据、模型、知识库、聊天、运行时、异步任务、Skills 和 MCP 创建 31 张 MVP 表。 | 只允许新增更高版本迁移；字段、约束和锁语义以 `docs/database-schema.md` 为准。 |
@@ -218,6 +239,10 @@
 | `.../api/config/TenantContextFilterTest.java` | 用 Mock 请求/响应验证过滤器从 principal 注入租户、finally 清理、同线程先后请求不残留、不信任 X-Tenant-Id 头、下游抛异常后上下文仍被清理。 | 过滤器注册或 principal 解析变化时同步维护。 |
 | `.../api/bootstrap/AdminBootstrapRunnerTest.java` | 用假服务验证未启用跳过、缺密码/缺登录/弱密码拒绝启动且消息不泄露原始值、合法配置执行并规范化输入。 | Runner 参数或异常语义变化时同步维护。 |
 | `.../api/database/AdminBootstrapIT.java` | Testcontainers 上跑真实 Spring 上下文：首次执行与重复执行、Argon2id 哈希、失败整体回滚，以及过期绑定在唯一约束下原地恢复并重新获得 ADMIN 权限。 | Docker 可用时通过 `docker-it` Profile 运行；过期绑定恢复后仍必须只有一条自然键记录。 |
+| `.../api/database/AuthFlowIT.java` | Testcontainers 上跑真实安全链登录闭环：正确密码登录返回 token 并用其访问 `/api/v1/users/me`（验证 refresh token 仅存 SHA-256 哈希、响应不含密码哈希/锁定字段/token 明文）、错误密码/禁用/锁定返回稳定错误码、连续失败触发锁定且成功登录清除计数、16 个并发错误密码全部累计并触发锁定（计数 = 401 数，原子递增不丢计数）、真实失败锁定的账号在锁定窗口过期后恢复登录、tenant-A 登录无法加载 tenant-B 用户与角色、DTO 校验失败统一 JSON 400。 | Docker 可用时通过 `docker-it` Profile 运行；登录闭环与轮换/登出按关注点拆分，轮换见 RefreshRotationIT。 |
+| `.../api/database/RefreshRotationIT.java` | Testcontainers 上跑真实安全链轮换闭环：单次轮换、重放撤销、并发收敛、登出幂等、保存点唯一冲突、禁用/锁定账户、明文不落库；额外注入 JWT 编码失败，验证 API 事务门面把根 token 消费和子 token 插入整体回滚，并覆盖 ACTIVE + 未来锁定时间。 | Docker 可用时通过 `docker-it` Profile 运行；修改轮换、签名、重放或账户锁定语义时保持此用例。 |
+| `.../api/database/LoginConcurrencyIT.java` | 独立 PostgreSQL 容器 + 真实 Spring 上下文，把 Hikari 池压到 4 并同时发起 4 个错误密码登录：证明登录失败链路不再持有嵌套事务，单个登录最多一个连接，所有请求在 20 秒内返回 401/403（无超时、无 500），失败计数不丢失并达到锁定阈值，正确密码随后被 403 拒绝。 | 这是针对「外层事务 + REQUIRES_NEW 嵌套导致连接池死锁」的回归测试，修改登录事务边界时保持此用例；旧实现会在此池上超时。 |
+| `.../api/database/UserQueryIT.java` | Testcontainers 上跑真实安全链：`AdminBootstrap` 引导 alpha/beta 两租户 + 裸 SQL 插入用户/角色/`user_roles`（真实 `PasswordHasher` Argon2id），登录取真实 token 后验证——匿名 401、无 `USER_READ` 角色 403、过期 `user_roles` 绑定 403、ADMIN 只列出本租户 7 个用户且 tenant-B 用户不出现、`ORDER BY created_at DESC` 分页顺序与 total 稳定、keyword/status 过滤、page=0/size=101/OFFSET 溢出/status=BOGUS/`/users/not-a-uuid` → 400、跨租户 userId → 404、详情不含 passwordHash/loginFailedCount/loginLockedUntil。 | Docker 可用时通过 `docker-it` Profile 运行；同时验证租户插件能正确改写带 LIKE/ESCAPE/COALESCE 的分页/统计自定义 SQL。 |
 
 ## 12. `knowagent-worker`
 

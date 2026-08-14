@@ -21,10 +21,10 @@ import java.util.Map;
  * authorities and whether {@link TenantContext} was populated, proving end-to-end
  * that a valid token reaches a protected route and establishes the tenant context.
  *
- * <p>The {@code /admin} route is guarded by {@code @PreAuthorize} (enabled in the
- * test context by {@link MethodSecurityTestConfig}) so the integration test can
- * drive an authenticated-but-forbidden request and verify the JSON 403 written by
- * {@code JsonAccessDeniedHandler}.
+ * <p>The {@code /admin} route is guarded by {@code @PreAuthorize}, which the
+ * production security configuration now enables globally, so the integration test
+ * can drive an authenticated-but-forbidden request and verify the JSON 403 written
+ * by {@code JsonAccessDeniedHandler}.
  */
 @RestController
 @RequestMapping("/api/v1/probe")

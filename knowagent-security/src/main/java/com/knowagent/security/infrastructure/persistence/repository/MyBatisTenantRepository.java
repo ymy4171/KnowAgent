@@ -1,5 +1,6 @@
 package com.knowagent.security.infrastructure.persistence.repository;
 
+import com.knowagent.common.tenant.TenantId;
 import com.knowagent.security.application.port.out.TenantRepository;
 import com.knowagent.security.domain.tenant.Tenant;
 import com.knowagent.security.infrastructure.persistence.converter.IdentityPersistenceConverter;
@@ -22,6 +23,13 @@ public class MyBatisTenantRepository implements TenantRepository {
     public Optional<Tenant> findActiveBySlug(String slug) {
         Objects.requireNonNull(slug, "slug must not be null");
         TenantPo record = mapper.selectActiveBySlug(slug);
+        return Optional.ofNullable(record).map(IdentityPersistenceConverter::toDomain);
+    }
+
+    @Override
+    public Optional<Tenant> findActiveById(TenantId tenantId) {
+        Objects.requireNonNull(tenantId, "tenantId must not be null");
+        TenantPo record = mapper.selectActiveById(tenantId.value());
         return Optional.ofNullable(record).map(IdentityPersistenceConverter::toDomain);
     }
 }
