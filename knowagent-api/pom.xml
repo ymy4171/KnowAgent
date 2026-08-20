@@ -121,6 +121,19 @@
             <artifactId>postgresql</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Real MinIO object storage for the docker-it integration tests. -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>minio</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Real Milvus 2.5.x vector store for the docker-it integration tests
+             (MilvusVectorStoreIT). -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>milvus</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!-- MockHttpServletRequest/Response and MockFilterChain for servlet filter tests. -->
         <dependency>
             <groupId>org.springframework</groupId>

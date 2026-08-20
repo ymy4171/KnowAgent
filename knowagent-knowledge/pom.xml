@@ -30,6 +30,84 @@
             <artifactId>knowagent-model</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- File ingestion writes a task + transactional outbox event atomically with
+             the knowledge_files row; only the observability application ports are used,
+             never its mappers. -->
+        <dependency>
+            <groupId>com.knowagent</groupId>
+            <artifactId>knowagent-observability</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!-- Object-storage boundary and key construction for uploaded source files. -->
+        <dependency>
+            <groupId>com.knowagent</groupId>
+            <artifactId>knowagent-workspace</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+            <version>${mybatis-plus.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <!-- Content-based document type detection (Tika core only: sniffing + magic
+             bytes) decides whether an upload is an allowed document type. The version
+             is pinned because Spring Boot does not manage Tika. -->
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-core</artifactId>
+            <version>3.1.0</version>
+        </dependency>
+        <!-- Local document parsing (提示词十三): PDF via PDFBox, DOCX via Apache POI.
+             Spring Boot does not manage either, so both versions are pinned explicitly.
+             tika-core stays parser-free; only these two libraries are added, nothing
+             else from the Tika/POI ecosystems. -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>3.0.5</version>
+            <!-- Spring Boot supplies spring-jcl; keeping PDFBox's native
+                 commons-logging implementation would put two bridges on the classpath. -->
+            <exclusions>
+                <exclusion>
+                    <groupId>commons-logging</groupId>
+                    <artifactId>commons-logging</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.4.1</version>
+        </dependency>
+        <!-- Milvus vector store adapter (提示词十六). io.milvus:milvus-sdk-java is the
+             official Java SDK and is not managed by any BOM, so the version is pinned
+             explicitly to the 2.5 line matching the Milvus 2.5.6 server used in
+             docker-compose. gson is the SDK's row payload format (UpsertReq data rows
+             are List<JsonObject>); Spring Boot manages the gson version. -->
+        <dependency>
+            <groupId>io.milvus</groupId>
+            <artifactId>milvus-sdk-java</artifactId>
+            <version>2.5.6</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+        </dependency>
+        <!-- Non-sensitive vector call metrics; the adapter degrades to a no-op without
+             a MeterRegistry, exactly like the model module's EmbeddingMetrics. -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
 
     </dependencies>
 

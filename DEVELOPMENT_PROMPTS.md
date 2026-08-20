@@ -347,4 +347,4 @@
 - Docker 集成测试覆盖两个租户和并发刷新。
 - README、TEST_PLAN 和 FILE_GUIDE 与实现保持一致。
 
-完成这一里程碑后，再进入知识库 CRUD、MinIO 文件上传和异步解析任务。
+完成这一里程碑后，按 [KNOWLEDGE_DEVELOPMENT_PROMPTS.md](KNOWLEDGE_DEVELOPMENT_PROMPTS.md) 继续执行知识库 CRUD、MinIO 文件上传、异步解析、Embedding 和 Milvus 检索任务。

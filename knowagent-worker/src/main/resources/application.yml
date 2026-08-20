@@ -25,8 +25,73 @@ mybatis-plus:
   global-config:
     banner: false
 
+model-provider:
+  secret-key: ${MODEL_PROVIDER_SECRET_KEY:}
+
+# Local document parsing limits (提示词十三); the worker will drive parsing for ingested
+# files. Every value is optional - an unset or non-positive value falls back to a safe
+# default.
+knowagent:
+  worker:
+    stream:
+      # One fixed, non-tenant-derived Stream. Consumer names must be unique per
+      # process; container HOSTNAME is the safe default for replicated Workers.
+      key: knowagent:knowledge-file-ingestion
+      group: ${WORKER_STREAM_GROUP:knowledge-file-ingestion}
+      consumer: ${WORKER_CONSUMER_NAME:${HOSTNAME:worker-local}}
+      batch-size: ${WORKER_STREAM_BATCH_SIZE:20}
+      poll-timeout: ${WORKER_STREAM_POLL_TIMEOUT:1s}
+      reclaim-idle: ${WORKER_STREAM_RECLAIM_IDLE:30s}
+      task-lease: ${WORKER_TASK_LEASE:5m}
+      outbox-lease: ${WORKER_OUTBOX_LEASE:30s}
+      publisher-enabled: ${WORKER_OUTBOX_PUBLISHER_ENABLED:true}
+      consumer-enabled: ${WORKER_STREAM_CONSUMER_ENABLED:true}
+      poll-delay: ${WORKER_STREAM_POLL_DELAY_MS:250}
+      reclaim-delay: ${WORKER_STREAM_RECLAIM_DELAY_MS:5000}
+      publisher-delay: ${WORKER_OUTBOX_PUBLISHER_DELAY_MS:1000}
+  parse:
+    max-bytes: ${PARSE_MAX_BYTES:52428800}
+    max-pages: ${PARSE_MAX_PAGES:1000}
+    max-uncompressed-bytes: ${PARSE_MAX_UNCOMPRESSED_BYTES:536870912}
+    max-characters: ${PARSE_MAX_CHARACTERS:10000000}
+    timeout: ${PARSE_TIMEOUT:60s}
+  model:
+    # OpenAI-compatible Embedding 调用网关（提示词十五）；与 API 共用同一装配与配置前缀。
+    embedding:
+      connect-timeout: ${EMBEDDING_CONNECT_TIMEOUT:5s}
+      read-timeout: ${EMBEDDING_READ_TIMEOUT:60s}
+      total-timeout: ${EMBEDDING_TOTAL_TIMEOUT:120s}
+      max-attempts: ${EMBEDDING_MAX_ATTEMPTS:3}
+      backoff-initial: ${EMBEDDING_BACKOFF_INITIAL:500ms}
+      backoff-multiplier: ${EMBEDDING_BACKOFF_MULTIPLIER:2.0}
+      backoff-max: ${EMBEDDING_BACKOFF_MAX:10s}
+      max-texts-per-batch: ${EMBEDDING_MAX_TEXTS_PER_BATCH:100}
+      max-tokens-per-batch: ${EMBEDDING_MAX_TOKENS_PER_BATCH:8000}
+      max-request-body-bytes: ${EMBEDDING_MAX_REQUEST_BODY_BYTES:200000}
+      max-client-cache-size: ${EMBEDDING_MAX_CLIENT_CACHE_SIZE:64}
+  vector:
+    # Milvus 向量存储适配器（提示词十六）；与 API 共用同一装配与配置前缀。只有
+    # MILVUS_ENDPOINT 设置后才会启用，否则装配 fail-fast 的 UnavailableVectorStoreGateway。
+    milvus:
+      uri: ${MILVUS_ENDPOINT:false}
+      username: ${MILVUS_USERNAME:}
+      password: ${MILVUS_PASSWORD:}
+      token: ${MILVUS_TOKEN:}
+      database-name: ${MILVUS_DATABASE:}
+      collection-name: ${MILVUS_COLLECTION:knowledge_chunks}
+      dimension: ${MILVUS_DIMENSION:0}
+      index-type: ${MILVUS_INDEX_TYPE:HNSW}
+      m: ${MILVUS_INDEX_M:16}
+      ef-construction: ${MILVUS_INDEX_EF_CONSTRUCTION:64}
+      search-ef: ${MILVUS_SEARCH_EF:64}
+      connect-timeout: ${MILVUS_CONNECT_TIMEOUT:5s}
+      rpc-deadline: ${MILVUS_RPC_DEADLINE:30s}
+      search-timeout: ${MILVUS_SEARCH_TIMEOUT:10s}
+      write-timeout: ${MILVUS_WRITE_TIMEOUT:30s}
+      delete-timeout: ${MILVUS_DELETE_TIMEOUT:30s}
+      init-timeout: ${MILVUS_INIT_TIMEOUT:120s}
+
 logging:
   level:
     root: INFO
     com.knowagent: INFO
-

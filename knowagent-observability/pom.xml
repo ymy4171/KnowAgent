@@ -25,7 +25,25 @@
             <artifactId>knowagent-security</artifactId>
             <version>${project.version}</version>
         </dependency>
-
+        <!-- Task/Outbox/Inbox persistence. The tenant-line and optimistic-lock
+             interceptors come from the security module's single global
+             MybatisPlusInterceptor; this module reuses its JsonNodeJsonbTypeHandler
+             for structured JSONB. Worker-side SQL bypasses the tenant line through
+             @InterceptorIgnore and carries an explicit tenant_id (see the
+             ObservabilityMapperSqlContractTest contract). -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+            <version>${mybatis-plus.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+        </dependency>
     </dependencies>
 
 </project>

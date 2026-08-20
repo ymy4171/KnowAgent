@@ -8,6 +8,13 @@ spring:
   data:
     redis:
       url: ${REDIS_URL:redis://localhost:6379}
+  servlet:
+    multipart:
+      # The multipart resolver is the first line of defense for oversized uploads
+      # (rejected with 413); the knowledge-file service independently bounds the
+      # spool at the same size as a second line of defense.
+      max-file-size: ${UPLOAD_MAX_FILE_SIZE:50MB}
+      max-request-size: ${UPLOAD_MAX_REQUEST_SIZE:60MB}
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -53,8 +60,65 @@ auth:
     lock-duration: ${AUTH_LOGIN_LOCK_DURATION:15m}
     refresh-token-ttl: ${AUTH_LOGIN_REFRESH_TOKEN_TTL:30d}
 
+# Model-provider secret master key (AES-256-GCM). Base64-encoded 32 bytes, read only
+# from the environment; application.yml carries no real key. A blank value means "no
+# master key configured" - writing a provider secret is then rejected, never stored in
+# plaintext.
+model-provider:
+  secret-key: ${MODEL_PROVIDER_SECRET_KEY:}
+
+# Local document parsing limits (提示词十三). Every value is optional - an unset or
+# non-positive value falls back to a safe default, so an unconfigured deployment still
+# parses bounded input. All are tunable through environment variables.
+knowagent:
+  parse:
+    max-bytes: ${PARSE_MAX_BYTES:52428800}            # max source bytes spooled (50 MiB)
+    max-pages: ${PARSE_MAX_PAGES:1000}                # max PDF pages
+    max-uncompressed-bytes: ${PARSE_MAX_UNCOMPRESSED_BYTES:536870912}  # DOCX zip-bomb guard (512 MiB)
+    max-characters: ${PARSE_MAX_CHARACTERS:10000000}  # max extracted text characters
+    timeout: ${PARSE_TIMEOUT:60s}                     # cooperative parse timeout
+  model:
+    # OpenAI-compatible Embedding 调用网关（提示词十五）。每个值都带内置安全默认，
+    # 未配置时同样生效；可通过环境变量覆盖。
+    embedding:
+      connect-timeout: ${EMBEDDING_CONNECT_TIMEOUT:5s}        # TCP 连接超时
+      read-timeout: ${EMBEDDING_READ_TIMEOUT:60s}             # 单次读超时
+      total-timeout: ${EMBEDDING_TOTAL_TIMEOUT:120s}          # 一次 embed() 全部批次共享的总超时
+      max-attempts: ${EMBEDDING_MAX_ATTEMPTS:3}               # 有界重试次数（含首次）
+      backoff-initial: ${EMBEDDING_BACKOFF_INITIAL:500ms}     # 退避初值
+      backoff-multiplier: ${EMBEDDING_BACKOFF_MULTIPLIER:2.0} # 退避倍增
+      backoff-max: ${EMBEDDING_BACKOFF_MAX:10s}               # 退避封顶
+      max-texts-per-batch: ${EMBEDDING_MAX_TEXTS_PER_BATCH:100}       # 每批最大文本条数
+      max-tokens-per-batch: ${EMBEDDING_MAX_TOKENS_PER_BATCH:8000}    # 每批估算 token 上限（char-run-v1）
+      max-request-body-bytes: ${EMBEDDING_MAX_REQUEST_BODY_BYTES:200000}  # 每批保守请求体上限
+      max-client-cache-size: ${EMBEDDING_MAX_CLIENT_CACHE_SIZE:64}       # (tenantId,providerId,configVersion) LRU 容量
+  vector:
+    # Milvus 向量存储适配器（提示词十六）。只有 MILVUS_ENDPOINT 设置后才会启用：
+    # 缺省时应用装配 UnavailableVectorStoreGateway（任何向量操作稳定报 VECTOR_UNAVAILABLE），
+    # 无 Docker/Milvus 的环境照常启动。启用后启动即幂等创建/校验 collection、索引并 load，
+    # schema/维度不匹配或 Milvus 不可达会拒绝启动（绝不 drop 已有 collection）。
+    milvus:
+      # "false" is the disabled sentinel used by the conditional configuration;
+      # an empty default would still satisfy @ConditionalOnProperty.
+      uri: ${MILVUS_ENDPOINT:false}
+      username: ${MILVUS_USERNAME:}
+      password: ${MILVUS_PASSWORD:}
+      token: ${MILVUS_TOKEN:}
+      database-name: ${MILVUS_DATABASE:}
+      collection-name: ${MILVUS_COLLECTION:knowledge_chunks}
+      dimension: ${MILVUS_DIMENSION:0}                    # 必填：与 embedding 模型输出一致，[1, 65536]
+      index-type: ${MILVUS_INDEX_TYPE:HNSW}               # HNSW | FLAT | AUTOINDEX
+      m: ${MILVUS_INDEX_M:16}                             # HNSW 索引参数
+      ef-construction: ${MILVUS_INDEX_EF_CONSTRUCTION:64} # HNSW 索引参数
+      search-ef: ${MILVUS_SEARCH_EF:64}                   # HNSW 检索参数
+      connect-timeout: ${MILVUS_CONNECT_TIMEOUT:5s}
+      rpc-deadline: ${MILVUS_RPC_DEADLINE:30s}
+      search-timeout: ${MILVUS_SEARCH_TIMEOUT:10s}
+      write-timeout: ${MILVUS_WRITE_TIMEOUT:30s}
+      delete-timeout: ${MILVUS_DELETE_TIMEOUT:30s}
+      init-timeout: ${MILVUS_INIT_TIMEOUT:120s}
+
 logging:
   level:
     root: INFO
     com.knowagent: INFO
-

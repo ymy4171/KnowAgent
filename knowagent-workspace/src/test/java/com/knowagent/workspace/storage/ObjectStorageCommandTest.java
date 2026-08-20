@@ -62,4 +62,22 @@ class ObjectStorageCommandTest {
                 new ByteArrayInputStream(new byte[0])
         ));
     }
+
+    @Test
+    void sha256IsOptionalButStrictlyValidatedWhenProvided() {
+        var withoutSha = new PutObjectCommand(
+                TENANT_ID, OBJECT_KEY, "application/pdf", 3,
+                new ByteArrayInputStream(new byte[]{1, 2, 3}));
+        assertThat(withoutSha.sha256()).isNull();
+
+        var withSha = new PutObjectCommand(
+                TENANT_ID, OBJECT_KEY, "application/pdf", 3,
+                new ByteArrayInputStream(new byte[]{1, 2, 3}),
+                "0123456789abcdef".repeat(4));
+        assertThat(withSha.sha256()).isEqualTo("0123456789abcdef".repeat(4));
+
+        assertThatIllegalArgumentException().isThrownBy(() -> new PutObjectCommand(
+                TENANT_ID, OBJECT_KEY, "application/pdf", 3,
+                new ByteArrayInputStream(new byte[]{1, 2, 3}), "not-hex"));
+    }
 }

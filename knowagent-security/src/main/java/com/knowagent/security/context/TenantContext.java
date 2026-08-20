@@ -22,10 +22,11 @@ import java.util.Optional;
  *       of accidentally querying across all tenants.</li>
  * </ul>
  *
- * <p>Only the web filter in {@code knowagent-api} is allowed to set and clear this
- * context. Controllers and application services must never call {@link #set} or
- * {@link #clear} directly; the filter always clears in a {@code finally} block so
- * a reused Servlet thread never carries a stale tenant into the next request.
+ * <p>Only trusted entry boundaries may set and clear this context: the authenticated
+ * web filter in {@code knowagent-api}, or the validated event scope in
+ * {@code knowagent-worker}. Controllers and application services must never mutate
+ * it directly. Both boundaries clear it in a {@code finally} block so reused threads
+ * never carry a stale tenant into the next unit of work.
  */
 public final class TenantContext {
 

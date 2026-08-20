@@ -35,6 +35,16 @@ public final class SecurityPermissions {
     public static final String MODEL_PROVIDER_WRITE = "MODEL_PROVIDER_WRITE";
     public static final String AUDIT_READ = "AUDIT_READ";
 
+    // Knowledge-base administration.
+    public static final String KNOWLEDGE_BASE_READ = "KNOWLEDGE_BASE_READ";
+    public static final String KNOWLEDGE_BASE_WRITE = "KNOWLEDGE_BASE_WRITE";
+    public static final String KNOWLEDGE_FILE_READ = "KNOWLEDGE_FILE_READ";
+    public static final String KNOWLEDGE_FILE_WRITE = "KNOWLEDGE_FILE_WRITE";
+    public static final String KNOWLEDGE_RETRIEVE = "KNOWLEDGE_RETRIEVE";
+
+    // Asynchronous task administration.
+    public static final String TASK_READ = "TASK_READ";
+
     /**
      * The immutable permission set granted to the bootstrap-created ADMIN system
      * role. ADMIN owns every stable administration permission defined above.
@@ -45,5 +55,9 @@ public final class SecurityPermissions {
             USER_READ, USER_WRITE,
             ROLE_READ, ROLE_WRITE,
             MODEL_PROVIDER_READ, MODEL_PROVIDER_WRITE,
+            KNOWLEDGE_BASE_READ, KNOWLEDGE_BASE_WRITE,
+            KNOWLEDGE_FILE_READ, KNOWLEDGE_FILE_WRITE,
+            KNOWLEDGE_RETRIEVE,
+            TASK_READ,
             AUDIT_READ);
 }

@@ -9,6 +9,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.stream.Collectors;
@@ -62,6 +64,28 @@ public class ApiExceptionHandler {
     }
 
     /**
+     * A multipart upload larger than the configured limit is rejected by the servlet
+     * container with a stable 413 rather than an internal error.
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiErrorResponse> uploadTooLarge(MaxUploadSizeExceededException exception) {
+        return ResponseEntity.status(statusFor(ErrorCode.PAYLOAD_TOO_LARGE))
+                .body(new ApiErrorResponse(ErrorCode.PAYLOAD_TOO_LARGE.name(),
+                        "The uploaded file exceeds the allowed size limit."));
+    }
+
+    /**
+     * A multipart request missing the expected {@code file} part is a client error
+     * (400), never an internal error.
+     */
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    public ResponseEntity<ApiErrorResponse> missingPart(MissingServletRequestPartException exception) {
+        return ResponseEntity.badRequest()
+                .body(new ApiErrorResponse(ErrorCode.VALIDATION_ERROR.name(),
+                        "The multipart request is missing the required 'file' part."));
+    }
+
+    /**
      * A route with no matching handler is a 404, not an internal error. This is
      * what lets permit-all routes without controllers answer 404 instead of 500.
      */
@@ -90,6 +114,27 @@ public class ApiExceptionHandler {
             case CONFLICT -> HttpStatus.CONFLICT;
             case EXTERNAL_SERVICE_ERROR -> HttpStatus.BAD_GATEWAY;
             case INTERNAL_ERROR -> HttpStatus.INTERNAL_SERVER_ERROR;
+            case PAYLOAD_TOO_LARGE -> HttpStatus.PAYLOAD_TOO_LARGE;
+            case UNSUPPORTED_DOCUMENT_TYPE -> HttpStatus.UNSUPPORTED_MEDIA_TYPE;
+            case EMPTY_DOCUMENT -> HttpStatus.UNPROCESSABLE_ENTITY;
+            case DOCUMENT_TOO_LARGE -> HttpStatus.PAYLOAD_TOO_LARGE;
+            case CORRUPT_DOCUMENT -> HttpStatus.UNPROCESSABLE_ENTITY;
+            case DOCUMENT_TIMEOUT -> HttpStatus.GATEWAY_TIMEOUT;
+            case OCR_REQUIRED -> HttpStatus.UNPROCESSABLE_ENTITY;
+            // Upstream model-call failures surface as gateway statuses; the response
+            // body is a fixed safe message, never the provider's raw error.
+            case MODEL_AUTH_FAILED -> HttpStatus.BAD_GATEWAY;
+            case MODEL_RATE_LIMITED -> HttpStatus.SERVICE_UNAVAILABLE;
+            case MODEL_TIMEOUT -> HttpStatus.GATEWAY_TIMEOUT;
+            case MODEL_BAD_RESPONSE -> HttpStatus.BAD_GATEWAY;
+            case MODEL_SERVICE_ERROR -> HttpStatus.BAD_GATEWAY;
+            case MODEL_CONFIGURATION_ERROR -> HttpStatus.INTERNAL_SERVER_ERROR;
+            // Vector-store failures surface as gateway statuses; the response body
+            // is a fixed safe message and never carries Milvus internals. A schema
+            // mismatch is a deployment configuration error, so it is a 500.
+            case VECTOR_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
+            case VECTOR_SCHEMA_MISMATCH -> HttpStatus.INTERNAL_SERVER_ERROR;
+            case VECTOR_BAD_RESPONSE -> HttpStatus.BAD_GATEWAY;
         };
     }
 }

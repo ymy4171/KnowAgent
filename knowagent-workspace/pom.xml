@@ -25,7 +25,14 @@
             <artifactId>knowagent-security</artifactId>
             <version>${project.version}</version>
         </dependency>
-
+        <!-- MinIO object-storage client. Not version-managed by the Spring Boot BOM,
+             so it is pinned explicitly here; 8.5.x is the stable line that matches the
+             MinIO server image pinned in docker-compose (RELEASE.2023-03-20). -->
+        <dependency>
+            <groupId>io.minio</groupId>
+            <artifactId>minio</artifactId>
+            <version>8.5.17</version>
+        </dependency>
     </dependencies>
 
 </project>

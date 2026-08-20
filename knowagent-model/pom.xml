@@ -26,9 +26,65 @@
             <version>${project.version}</version>
         </dependency>
         <dependency>
+            <groupId>io.projectreactor</groupId>
+            <artifactId>reactor-core</artifactId>
+        </dependency>
+        <!-- Model-provider configuration persistence. The tenant-line and
+             optimistic-lock interceptors are provided globally by the security
+             module's MybatisPlusInterceptor bean; this module only needs the
+             starter for BaseMapper/@Mapper and the JDBC driver + Jackson for its
+             own JSONB type handlers. -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+            <version>${mybatis-plus.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+        </dependency>
+        <!-- OpenAI-compatible model client (protocol only). Version is managed by the
+             spring-ai-bom import in the parent. This module's EmbeddingGateway adapter
+             uses Spring AI's EmbeddingModel/EmbeddingRequest/EmbeddingResponse and the
+             OpenAiApi protocol client; the adapter still owns batching, bounded retry,
+             total-timeout and error mapping so Spring AI's default retry/error-handler
+             behavior (10 attempts, raw provider body in messages) is never used. -->
+        <dependency>
             <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-model</artifactId>
+            <artifactId>spring-ai-openai</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.wiremock</groupId>
+            <artifactId>wiremock</artifactId>
+            <version>3.9.1</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- WireMock 3.9.1 embeds its HTTP server built against Jetty 11. The
+                 Spring Boot BOM in the parent manages the same artifacts at Jetty 12,
+                 which would mix two incompatible Jetty generations on the test
+                 classpath ("Jetty 11 is not present" fatal error). Pinning the Jetty
+                 BOM here keeps WireMock's embedded server on the generation it was
+                 built against, for this module's tests only. -->
+            <dependency>
+                <groupId>org.eclipse.jetty</groupId>
+                <artifactId>jetty-bom</artifactId>
+                <version>11.0.20</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
 </project>
